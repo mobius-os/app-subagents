@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "claude": {
+      "name": "Claude",
+      "cli": "claude",
+      "default_model": null,
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "models": [
+        {
+          "id": "claude-fable-5",
+          "name": "Fable 5",
+          "aliases": ["fable", "claude fable", "fable 5"],
+          "role": "Fast, capable default for bounded delegated work."
+        },
+        {
+          "id": "claude-sonnet-5",
+          "name": "Sonnet 5",
+          "aliases": ["sonnet", "claude sonnet", "sonnet 5"],
+          "role": "General-purpose Claude model for coding and analysis."
+        },
+        {
+          "id": "claude-opus-4-8",
+          "name": "Opus 4.8",
+          "aliases": ["opus", "claude opus", "opus 4.8"],
+          "role": "High-capability Claude model for difficult review and reasoning."
+        },
+        {
+          "id": "claude-sonnet-4-6",
+          "name": "Sonnet 4.6",
+          "aliases": ["sonnet 4.6", "claude-sonnet-4-6"],
+          "role": "Stable prior-generation Sonnet option."
+        }
+      ]
+    },
+    "codex": {
+      "name": "Codex",
+      "cli": "codex",
+      "default_model": "gpt-5.6-sol",
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"],
+      "models": [
+        {
+          "id": "gpt-5.6-sol",
+          "name": "Sol",
+          "aliases": ["sol", "5.6 sol", "5.6-sol", "default"],
+          "role": "Balanced 5.6-generation model and the strongest general coding choice.",
+          "verified": true,
+          "effort_levels": ["low", "medium", "high", "xhigh", "max", "ultra"]
+        },
+        {
+          "id": "gpt-5.6-terra",
+          "name": "Terra",
+          "aliases": ["terra", "5.6 terra", "5.6-terra"],
+          "role": "5.6 sibling of Sol; use when named explicitly.",
+          "verified": true,
+          "effort_levels": ["low", "medium", "high", "xhigh", "max", "ultra"]
+        },
+        {
+          "id": "gpt-5.6-luna",
+          "name": "Luna",
+          "aliases": ["luna", "5.6 luna", "5.6-luna"],
+          "role": "5.6 sibling of Sol; use when named explicitly.",
+          "verified": true
+        },
+        {
+          "id": "gpt-5.4",
+          "name": "GPT-5.4",
+          "aliases": ["5.4", "prior gen", "previous"],
+          "role": "Previous-generation full model for comparisons and regressions.",
+          "verified": true
+        },
+        {
+          "id": "gpt-5.4-mini",
+          "name": "GPT-5.4 mini",
+          "aliases": ["mini", "5.4 mini", "small", "fast", "cheap"],
+          "role": "Small, fast model for tightly bounded low-risk tasks.",
+          "verified": true
+        },
+        {
+          "id": "gpt-5.3-codex-spark",
+          "name": "Spark",
+          "aliases": ["spark", "5.3 spark", "codex spark"],
+          "role": "Legacy Codex Spark model, retained for explicit requests.",
+          "verified": true
+        }
+      ]
+    }
+  }
+}
