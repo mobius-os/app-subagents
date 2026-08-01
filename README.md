@@ -13,7 +13,8 @@ One optional control surface for delegating bounded work to **Claude** and
 - **One provider-neutral skill** reads the current settings at delegation time
   and runs through `subagents.py`, which enforces a one-hop recursion limit,
   preserves the task's read/write scope, records real runtime outcomes, and
-  never silently swaps provider or model.
+  never silently swaps provider or model. The helper does not impose its own
+  monetary budget; provider/account limits remain authoritative.
 
 ## Durable state
 

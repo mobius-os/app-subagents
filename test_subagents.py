@@ -73,6 +73,7 @@ class SubagentsContractTests(unittest.TestCase):
     codex = subagents._command("codex", "write", "gpt-5.6-sol", "high")
 
     self.assertIn("plan", claude)
+    self.assertNotIn("--max-budget-usd", claude)
     self.assertIn("workspace-write", codex)
     self.assertIn('model_reasoning_effort="high"', codex)
 

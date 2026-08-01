@@ -1,7 +1,7 @@
 {
   "id": "codex",
   "name": "Subagents",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Connect and independently enable Claude or Codex subagents, choose provider-specific defaults, and give the Möbius agent one guarded delegation capability.",
   "author": "mobius-os",
   "license": "MIT",

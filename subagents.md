@@ -74,6 +74,8 @@ The helper:
 - uses a read-only sandbox/permission mode for reviews and a write-capable mode
   only when the current task already authorizes edits;
 - waits inside this turn;
+- leaves spending limits to the owner's provider/account configuration rather
+  than imposing a hidden per-run dollar ceiling;
 - records success, quota exhaustion, auth failure, or temporary failure in the
   app's runtime status without hiding the provider's exact error;
 - never retries through another provider or model.
