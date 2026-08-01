@@ -13,8 +13,14 @@ One optional control surface for delegating bounded work to **Claude** and
 - **One provider-neutral skill** reads the current settings at delegation time
   and runs through `subagents.py`, which enforces a one-hop recursion limit,
   preserves the task's read/write scope, records real runtime outcomes, and
-  never silently swaps provider or model. The helper does not impose its own
-  monetary budget; provider/account limits remain authoritative.
+  never silently swaps provider or model. Provider/account spending limits
+  remain authoritative.
+- **Durable child tasks** are hidden app-owned chats supervised by Möbius's
+  ordinary SDK/session/restart machinery. A stable task name attaches retries
+  and post-restart parents to the same child rather than spending twice.
+- **Conservative recovery** may reseed lost read-only sessions from retained
+  child history, while lost write sessions stop for review. Both providers
+  retain their normal account-derived spending limits and accounting.
 
 ## Durable state
 
@@ -25,6 +31,10 @@ The app owns two files in its numeric-ID storage:
 
 The UI subscribes to both, so a result recorded by the agent repaints an
 already-open app.
+
+Delegation intent and complete child transcripts live in Möbius's relational
+chat store. They are retained indefinitely unless the owner deliberately
+removes the underlying data; the app does not run an automatic cleanup job.
 
 ## Install lifecycle
 

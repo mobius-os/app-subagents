@@ -1,23 +1,16 @@
 {
   "id": "codex",
   "name": "Subagents",
-  "version": "0.3.1",
-  "description": "Connect and independently enable Claude or Codex subagents, choose provider-specific defaults, and give the Möbius agent one guarded delegation capability.",
+  "version": "0.4.0",
+  "description": "Connect Claude or Codex, choose provider defaults, and run guarded delegated tasks that survive planned platform restarts.",
   "author": "mobius-os",
   "license": "MIT",
   "homepage": "https://github.com/mobius-os/app-subagents",
+  "icon": "icon.svg",
   "entry": "index.jsx",
-  "icon": "icon.png",
-  "offline_capable": false,
-  "permissions": {},
-  "skills": ["subagents.md"],
-  "source_files": ["models.json", "subagents.md", "subagents.py", "test_subagents.py"],
-  "runtime": {
-    "imports": [
-      "react",
-      "react-dom",
-      "@openai/apps-sdk-ui/components/Icon"
-    ],
-    "esm_deps": []
-  }
+  "system_prompt": "system-prompt.md",
+  "skills": [
+    { "name": "subagents", "description": "Delegate bounded work to an enabled Claude or Codex provider while preserving model, effort, scope, and one-hop recursion limits.", "file": "subagents.md" }
+  ],
+  "storage": { "max_bytes": 1048576 }
 }

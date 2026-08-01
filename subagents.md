@@ -59,6 +59,7 @@ Put the lean outcome-first prompt in a temporary file, then call:
 ```bash
 python <source_dir>/subagents.py run \
   --provider claude|codex \
+  --name <stable-task-key> \
   --scope read|write \
   [--model <exact-id-or-alias>] \
   [--effort <level>] \
@@ -70,18 +71,29 @@ The helper:
 
 - checks current connection + enable state again immediately before spending;
 - applies the provider's configured model/effort defaults;
-- sets a maximum delegation depth of one and tells the child not to delegate;
+- creates one hidden, app-owned child chat whose transcript and SDK session are
+  supervised by Möbius like any other durable turn;
+- treats `(parent logical run, --name)` as the immutable idempotency key, so
+  re-running the exact command after a retry or planned restart ATTACHES to the
+  existing child instead of spending twice;
+- sets a maximum delegation depth of one and blocks child questions, skills,
+  Memory, recent-chat context, and further agent/workflow launches;
 - uses a read-only sandbox/permission mode for reviews and a write-capable mode
   only when the current task already authorizes edits;
-- waits inside this turn;
-- leaves spending limits to the owner's provider/account configuration rather
-  than imposing a hidden per-run dollar ceiling;
+- waits inside this turn while the durable child runs; after a platform restart,
+  run the same command + task name to reattach and continue waiting;
+- leaves spending limits to the owner's provider/account configuration;
+- automatically reseeds a lost read-only provider session from the durable
+  child history, but stops a lost write session for parent review rather than
+  risking duplicate edits;
 - records success, quota exhaustion, auth failure, or temporary failure in the
   app's runtime status without hiding the provider's exact error;
 - never retries through another provider or model.
 
 Do not invoke `claude -p` or `codex exec` directly when this installed app is
-available; the helper is the recursion, configuration, and status boundary.
+available; the helper is the recursion, configuration, durable identity, and
+status boundary. Choose a short semantic task name (for example
+`audit-restart-recovery`) and reuse it only for that exact prompt + policy.
 
 ## 4. Shape the prompt and verify
 
@@ -98,4 +110,6 @@ Point to real files instead of pasting large context. A delegated result is
 evidence or a candidate change, not a substitute for your own judgment. Review
 its output, verify any edits, and tell the partner which provider did what.
 
-Never end a turn while a delegated process is still running.
+Never voluntarily end a turn while a delegated child is still running. A
+planned platform restart is the exception: after recovery, re-run the same
+helper command and `--name` to attach to the child the supervisor resumed.
