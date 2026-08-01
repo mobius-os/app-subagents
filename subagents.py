@@ -231,7 +231,6 @@ def _command(provider: str, scope: str, model: str | None, effort: str | None):
       "claude", "-p", "--output-format", "text",
       "--no-session-persistence",
       "--permission-mode", "plan" if scope == "read" else "acceptEdits",
-      "--max-budget-usd", "5",
     ]
     if model:
       cmd += ["--model", model]
