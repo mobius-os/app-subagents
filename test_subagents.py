@@ -1,8 +1,12 @@
 import argparse
+from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
+import io
 import os
 from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).with_name("subagents.py")
@@ -68,14 +72,98 @@ class SubagentsContractTests(unittest.TestCase):
       else:
         os.environ["MOBIUS_SUBAGENT_DEPTH"] = original
 
-  def test_read_and_write_scopes_map_to_provider_native_guards(self):
-    claude = subagents._command("claude", "read", None, None)
-    codex = subagents._command("codex", "write", "gpt-5.6-sol", "high")
+  def test_run_submits_named_durable_work_and_returns_result(self):
+    with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+      handle.write("Audit the restart path.")
+      prompt_path = handle.name
+    args = argparse.Namespace(
+      provider="codex", name="audit-restart", scope="read", model=None,
+      effort=None, explicit=False, prompt_file=prompt_path, cwd="/data",
+      timeout=10, poll_interval=0.001,
+    )
+    snapshot = {
+      "app_id": 102,
+      "providers": {
+        "codex": {
+          "connected": True, "enabled": True,
+          "default_model": "gpt-5.6-sol", "default_effort": None,
+          "models": [{"id": "gpt-5.6-sol", "name": "Sol"}],
+          "aliases": {},
+        }
+      },
+    }
+    calls = []
 
-    self.assertIn("plan", claude)
-    self.assertNotIn("--max-budget-usd", claude)
-    self.assertIn("workspace-write", codex)
-    self.assertIn('model_reasoning_effort="high"', codex)
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      return {
+        "id": "delegation-1", "status": "completed", "result": "Done.",
+      }
+
+    original_chat = os.environ.get("CHAT_ID")
+    os.environ["CHAT_ID"] = "parent-chat"
+    try:
+      with patch.object(subagents, "snapshot", return_value=snapshot), \
+           patch.object(subagents, "_api", side_effect=fake_api), \
+           patch.object(subagents, "_record"):
+        self.assertEqual(subagents.run(args), 0)
+    finally:
+      Path(prompt_path).unlink(missing_ok=True)
+      if original_chat is None:
+        os.environ.pop("CHAT_ID", None)
+      else:
+        os.environ["CHAT_ID"] = original_chat
+
+    self.assertEqual(calls[0][0], "/api/delegations")
+    self.assertEqual(calls[0][1], "POST")
+    self.assertEqual(calls[0][2]["task_key"], "audit-restart")
+    self.assertEqual(calls[0][2]["parent_chat_id"], "parent-chat")
+
+  def test_completed_truncated_result_names_the_durable_transcript(self):
+    with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+      handle.write("Audit the large result path.")
+      prompt_path = handle.name
+    args = argparse.Namespace(
+      provider="codex", name="large-result", scope="read", model=None,
+      effort=None, explicit=False, prompt_file=prompt_path, cwd="/data",
+      timeout=10, poll_interval=0.001,
+    )
+    snapshot = {
+      "app_id": 102,
+      "providers": {
+        "codex": {
+          "connected": True, "enabled": True,
+          "default_model": "gpt-5.6-sol", "default_effort": None,
+          "models": [{"id": "gpt-5.6-sol", "name": "Sol"}],
+          "aliases": {},
+        }
+      },
+    }
+    delegation = {
+      "id": "delegation-large", "child_chat_id": "child-large",
+      "status": "completed", "result": "Partial result.",
+      "result_truncated": True,
+    }
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    original_chat = os.environ.get("CHAT_ID")
+    os.environ["CHAT_ID"] = "parent-chat"
+    try:
+      with patch.object(subagents, "snapshot", return_value=snapshot), \
+           patch.object(subagents, "_api", return_value=delegation), \
+           patch.object(subagents, "_record"), \
+           redirect_stdout(stdout), redirect_stderr(stderr):
+        self.assertEqual(subagents.run(args), 0)
+    finally:
+      Path(prompt_path).unlink(missing_ok=True)
+      if original_chat is None:
+        os.environ.pop("CHAT_ID", None)
+      else:
+        os.environ["CHAT_ID"] = original_chat
+
+    self.assertEqual(stdout.getvalue(), "Partial result.\n")
+    self.assertIn("child-large", stderr.getvalue())
+    self.assertIn("complete transcript", stderr.getvalue())
 
 
 if __name__ == "__main__":

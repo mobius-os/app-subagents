@@ -13,8 +13,8 @@ from datetime import UTC, datetime
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -225,30 +225,6 @@ def _classify_failure(text: str) -> str:
   return "temporarily_unavailable"
 
 
-def _command(provider: str, scope: str, model: str | None, effort: str | None):
-  if provider == "claude":
-    cmd = [
-      "claude", "-p", "--output-format", "text",
-      "--no-session-persistence",
-      "--permission-mode", "plan" if scope == "read" else "acceptEdits",
-    ]
-    if model:
-      cmd += ["--model", model]
-    if effort:
-      cmd += ["--effort", effort]
-    return cmd
-  cmd = [
-    "codex", "exec", "--ephemeral", "--skip-git-repo-check",
-    "--sandbox", "read-only" if scope == "read" else "workspace-write",
-  ]
-  if model:
-    cmd += ["--model", model]
-  if effort:
-    cmd += ["-c", f'model_reasoning_effort="{effort}"']
-  cmd.append("-")
-  return cmd
-
-
 def run(args: argparse.Namespace) -> int:
   depth = int(os.environ.get("MOBIUS_SUBAGENT_DEPTH", "0") or 0)
   if depth >= MAX_DEPTH:
@@ -269,43 +245,104 @@ def run(args: argparse.Namespace) -> int:
   prompt = Path(args.prompt_file).read_text(encoding="utf-8").strip()
   if not prompt:
     raise SubagentError("The delegated prompt is empty.")
-  guarded_prompt = (
-    "You are a delegated subagent inside Möbius. Do not invoke, consult, "
-    "or delegate to any other agent, model, provider, or CLI. Complete only "
-    "the bounded task below and return control to the parent. Preserve the "
-    "stated read/write scope exactly.\n\n" + prompt
+  parent_chat_id = os.environ.get("CHAT_ID", "").strip()
+  if not parent_chat_id:
+    raise SubagentError("This delegated run is not attached to a parent chat.")
+
+  delegation = _api("/api/delegations", method="POST", body={
+    "app_id": snap["app_id"],
+    "parent_chat_id": parent_chat_id,
+    "task_key": args.name,
+    "prompt": prompt,
+    "provider": args.provider,
+    "model": model,
+    "effort": effort,
+    "scope": args.scope,
+    "cwd": args.cwd or os.getcwd(),
+  })
+  if not isinstance(delegation, dict) or not delegation.get("id"):
+    raise SubagentError("Möbius did not return a durable delegation identity.")
+
+  delegation_id = delegation["id"]
+  deadline = time.monotonic() + args.timeout
+  transient_failures = 0
+  while True:
+    status = str(delegation.get("status") or "starting")
+    result = str(delegation.get("result") or "").strip()
+    if status == "completed":
+      _record(
+        snap["app_id"], args.provider, "available",
+        f"Delegation {delegation_id} completed.", model,
+      )
+      if result:
+        print(result)
+      if delegation.get("result_truncated") is True:
+        print(
+          "Möbius truncated this unusually large result. Open the durable "
+          f"child chat {delegation.get('child_chat_id') or delegation_id} "
+          "for the complete transcript.",
+          file=sys.stderr,
+        )
+      return 0
+    if status in {
+      "failed", "needs_review", "stopped", "cancelled", "interrupted",
+    }:
+      detail = result or f"Delegation ended with status {status}."
+      _record(
+        snap["app_id"], args.provider, _classify_failure(detail), detail, model,
+      )
+      print(detail, file=sys.stderr)
+      return 3 if status == "needs_review" else 1
+    if time.monotonic() >= deadline:
+      detail = (
+        f"Stopped waiting after {args.timeout} seconds; durable delegation "
+        f"{delegation_id} is still {status} and was not cancelled. Re-run "
+        f"with --name {args.name!r} to attach again."
+      )
+      _record(
+        snap["app_id"], args.provider, "temporarily_unavailable", detail, model,
+      )
+      raise SubagentError(detail)
+    time.sleep(args.poll_interval)
+    try:
+      next_value = _api(f"/api/delegations/{delegation_id}")
+      if isinstance(next_value, dict):
+        delegation = next_value
+        transient_failures = 0
+      else:
+        transient_failures += 1
+    except SubagentError:
+      transient_failures += 1
+      if transient_failures >= 3:
+        raise
+
+
+def list_work(args: argparse.Namespace) -> int:
+  snap = snapshot()
+  value = _api(f"/api/delegations?app_id={snap['app_id']}&limit={args.limit}")
+  print(json.dumps(value or {"items": []}, indent=2))
+  return 0
+
+
+def status(args: argparse.Namespace) -> int:
+  value = _api(
+    f"/api/delegations/{args.delegation_id}"
+    + ("?include_history=true" if args.history else "")
   )
-  env = os.environ.copy()
-  env["MOBIUS_SUBAGENT_DEPTH"] = str(depth + 1)
-  env["MOBIUS_SUBAGENT_PROVIDER"] = args.provider
-  cmd = _command(args.provider, args.scope, model, effort)
-  try:
-    proc = subprocess.run(
-      cmd,
-      input=guarded_prompt,
-      text=True,
-      capture_output=True,
-      env=env,
-      cwd=args.cwd or os.getcwd(),
-      timeout=args.timeout,
-    )
-  except subprocess.TimeoutExpired as exc:
-    detail = f"Timed out after {args.timeout} seconds."
-    _record(snap["app_id"], args.provider, "temporarily_unavailable", detail, model)
-    raise SubagentError(detail) from exc
-  combined = "\n".join(part for part in (proc.stdout, proc.stderr) if part).strip()
-  if proc.returncode == 0:
-    _record(snap["app_id"], args.provider, "available", "Last call succeeded.", model)
-  else:
-    _record(
-      snap["app_id"], args.provider, _classify_failure(combined),
-      combined or f"Exited with status {proc.returncode}.", model,
-    )
-  if proc.stdout:
-    sys.stdout.write(proc.stdout)
-  if proc.stderr:
-    sys.stderr.write(proc.stderr)
-  return proc.returncode
+  if value is None:
+    raise SubagentError("Delegation not found.")
+  print(json.dumps(value, indent=2))
+  return 0
+
+
+def cancel(args: argparse.Namespace) -> int:
+  value = _api(
+    f"/api/delegations/{args.delegation_id}/cancel", method="POST", body={}
+  )
+  if value is None:
+    raise SubagentError("Delegation not found.")
+  print(json.dumps(value, indent=2))
+  return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -314,6 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
   sub.add_parser("snapshot", help="Print the effective live provider state.")
   run_parser = sub.add_parser("run", help="Run one guarded delegated turn.")
   run_parser.add_argument("--provider", choices=PROVIDERS, required=True)
+  run_parser.add_argument(
+    "--name", required=True,
+    help="Stable task key used to attach after retries or a platform restart.",
+  )
   run_parser.add_argument("--scope", choices=("read", "write"), required=True)
   run_parser.add_argument("--model")
   run_parser.add_argument("--effort")
@@ -321,6 +362,14 @@ def build_parser() -> argparse.ArgumentParser:
   run_parser.add_argument("--prompt-file", required=True)
   run_parser.add_argument("--cwd")
   run_parser.add_argument("--timeout", type=int, default=1800)
+  run_parser.add_argument("--poll-interval", type=float, default=1.5)
+  list_parser = sub.add_parser("list", help="List durable delegated work.")
+  list_parser.add_argument("--limit", type=int, default=100)
+  status_parser = sub.add_parser("status", help="Show one delegated task.")
+  status_parser.add_argument("delegation_id")
+  status_parser.add_argument("--history", action="store_true")
+  cancel_parser = sub.add_parser("cancel", help="Cancel one delegated task.")
+  cancel_parser.add_argument("delegation_id")
   return parser
 
 
@@ -330,7 +379,13 @@ def main() -> int:
     if args.command == "snapshot":
       print(json.dumps(snapshot(), indent=2))
       return 0
-    return run(args)
+    if args.command == "run":
+      return run(args)
+    if args.command == "list":
+      return list_work(args)
+    if args.command == "status":
+      return status(args)
+    return cancel(args)
   except (OSError, ValueError, SubagentError) as exc:
     print(f"subagents: {exc}", file=sys.stderr)
     return 2
