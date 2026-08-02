@@ -6,11 +6,18 @@
   "author": "mobius-os",
   "license": "MIT",
   "homepage": "https://github.com/mobius-os/app-subagents",
-  "icon": "icon.svg",
+  "icon": "icon.png",
   "entry": "index.jsx",
-  "system_prompt": "system-prompt.md",
   "skills": [
-    { "name": "subagents", "description": "Delegate bounded work to an enabled Claude or Codex provider while preserving model, effort, scope, and one-hop recursion limits.", "file": "subagents.md" }
+    "subagents.md"
   ],
-  "storage": { "max_bytes": 1048576 }
+  "storage": {
+    "max_bytes": 1048576
+  },
+  "source_files": [
+    "models.json",
+    "subagents.md",
+    "subagents.py",
+    "test_subagents.py"
+  ]
 }
