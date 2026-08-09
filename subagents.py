@@ -254,7 +254,7 @@ def run(args: argparse.Namespace) -> int:
   # turn can end now. A blocking run must NOT opt in — the parent gets the
   # result inline from this poll loop, and a wake would fire a wasteful
   # duplicate turn with the same result.
-  background = bool(getattr(args, "background", False))
+  background = args.background
   delegation = _api("/api/delegations", method="POST", body={
     "app_id": snap["app_id"],
     "parent_chat_id": parent_chat_id,
