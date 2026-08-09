@@ -249,6 +249,12 @@ def run(args: argparse.Namespace) -> int:
   if not parent_chat_id:
     raise SubagentError("This delegated run is not attached to a parent chat.")
 
+  # Background delegations opt into the parent auto-wake: the child runs on its
+  # own and Möbius wakes THIS chat with the result when it finishes, so the
+  # turn can end now. A blocking run must NOT opt in — the parent gets the
+  # result inline from this poll loop, and a wake would fire a wasteful
+  # duplicate turn with the same result.
+  background = bool(getattr(args, "background", False))
   delegation = _api("/api/delegations", method="POST", body={
     "app_id": snap["app_id"],
     "parent_chat_id": parent_chat_id,
@@ -259,11 +265,30 @@ def run(args: argparse.Namespace) -> int:
     "effort": effort,
     "scope": args.scope,
     "cwd": args.cwd or os.getcwd(),
+    "notify_parent_on_complete": background,
   })
   if not isinstance(delegation, dict) or not delegation.get("id"):
     raise SubagentError("Möbius did not return a durable delegation identity.")
 
   delegation_id = delegation["id"]
+  if background:
+    _record(
+      snap["app_id"], args.provider, "available",
+      f"Delegation {delegation_id} submitted in background.", model,
+    )
+    print(json.dumps({
+      "delegation_id": delegation_id,
+      "task_key": args.name,
+      "child_chat_id": delegation.get("child_chat_id"),
+      "status": str(delegation.get("status") or "starting"),
+      "background": True,
+      "note": (
+        "Submitted. This chat will be auto-woken with the result when the "
+        "task finishes — do not wait for it in this turn. Reuse this --name to "
+        "attach and poll early if you need it sooner."
+      ),
+    }, indent=2))
+    return 0
   deadline = time.monotonic() + args.timeout
   transient_failures = 0
   while True:
@@ -361,6 +386,13 @@ def build_parser() -> argparse.ArgumentParser:
   run_parser.add_argument("--explicit", action="store_true")
   run_parser.add_argument("--prompt-file", required=True)
   run_parser.add_argument("--cwd")
+  run_parser.add_argument(
+    "--background", action="store_true",
+    help=(
+      "Submit and return immediately; Möbius auto-wakes this chat with the "
+      "result when the child finishes (no in-turn waiting)."
+    ),
+  )
   run_parser.add_argument("--timeout", type=int, default=1800)
   run_parser.add_argument("--poll-interval", type=float, default=1.5)
   list_parser = sub.add_parser("list", help="List durable delegated work.")

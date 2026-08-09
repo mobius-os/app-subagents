@@ -166,5 +166,102 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertIn("complete transcript", stderr.getvalue())
 
 
+  def test_background_run_submits_with_wake_and_returns_without_polling(self):
+    with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+      handle.write("Audit the restart path in the background.")
+      prompt_path = handle.name
+    args = argparse.Namespace(
+      provider="codex", name="bg-audit", scope="read", model=None,
+      effort=None, explicit=False, prompt_file=prompt_path, cwd="/data",
+      background=True, timeout=10, poll_interval=0.001,
+    )
+    snapshot = {
+      "app_id": 102,
+      "providers": {
+        "codex": {
+          "connected": True, "enabled": True,
+          "default_model": "gpt-5.6-sol", "default_effort": None,
+          "models": [{"id": "gpt-5.6-sol", "name": "Sol"}],
+          "aliases": {},
+        }
+      },
+    }
+    calls = []
+
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      # Only the submit should ever be called in background mode.
+      return {"id": "delegation-bg", "child_chat_id": "child-bg",
+              "status": "starting"}
+
+    stdout = io.StringIO()
+    original_chat = os.environ.get("CHAT_ID")
+    os.environ["CHAT_ID"] = "parent-chat"
+    try:
+      with patch.object(subagents, "snapshot", return_value=snapshot), \
+           patch.object(subagents, "_api", side_effect=fake_api), \
+           patch.object(subagents, "_record"), \
+           redirect_stdout(stdout):
+        self.assertEqual(subagents.run(args), 0)
+    finally:
+      Path(prompt_path).unlink(missing_ok=True)
+      if original_chat is None:
+        os.environ.pop("CHAT_ID", None)
+      else:
+        os.environ["CHAT_ID"] = original_chat
+
+    # Exactly one API call (the submit) — no polling loop in background mode.
+    self.assertEqual(len(calls), 1)
+    self.assertEqual(calls[0][0], "/api/delegations")
+    self.assertIs(calls[0][2]["notify_parent_on_complete"], True)
+    self.assertIn("delegation-bg", stdout.getvalue())
+    self.assertIn("auto-woken", stdout.getvalue())
+
+  def test_blocking_run_opts_out_of_parent_wake(self):
+    with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+      handle.write("Audit inline.")
+      prompt_path = handle.name
+    args = argparse.Namespace(
+      provider="codex", name="inline-audit", scope="read", model=None,
+      effort=None, explicit=False, prompt_file=prompt_path, cwd="/data",
+      background=False, timeout=10, poll_interval=0.001,
+    )
+    snapshot = {
+      "app_id": 102,
+      "providers": {
+        "codex": {
+          "connected": True, "enabled": True,
+          "default_model": "gpt-5.6-sol", "default_effort": None,
+          "models": [{"id": "gpt-5.6-sol", "name": "Sol"}],
+          "aliases": {},
+        }
+      },
+    }
+    calls = []
+
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      return {"id": "delegation-inline", "status": "completed",
+              "result": "Done inline."}
+
+    original_chat = os.environ.get("CHAT_ID")
+    os.environ["CHAT_ID"] = "parent-chat"
+    try:
+      with patch.object(subagents, "snapshot", return_value=snapshot), \
+           patch.object(subagents, "_api", side_effect=fake_api), \
+           patch.object(subagents, "_record"), \
+           redirect_stdout(io.StringIO()):
+        self.assertEqual(subagents.run(args), 0)
+    finally:
+      Path(prompt_path).unlink(missing_ok=True)
+      if original_chat is None:
+        os.environ.pop("CHAT_ID", None)
+      else:
+        os.environ["CHAT_ID"] = original_chat
+
+    # A blocking run must not opt into the wake — the result is delivered inline.
+    self.assertIs(calls[0][2]["notify_parent_on_complete"], False)
+
+
 if __name__ == "__main__":
   unittest.main()
