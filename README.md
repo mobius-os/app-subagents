@@ -42,3 +42,9 @@ removes the underlying data; the app does not run an automatic cleanup job.
 install materializes that skill into the shared agent skill inventory; uninstall
 deactivates it and recovery restores it. Local `apply_app.py` intentionally does
 not simulate this lifecycle.
+
+Version 0.4.4 changes the package identity to `subagents`. Its `previous_id` is
+`codex` so that one package migration adopts existing installations in place,
+including their numeric app identity, settings, durable child chats, and
+app-scoped storage. Runtime discovery uses the installed source tree rather than
+carrying either package name as a fallback.

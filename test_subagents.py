@@ -39,6 +39,22 @@ def connected_snapshot():
 
 
 class SubagentsContractTests(unittest.TestCase):
+  def test_app_identity_is_bound_to_its_source_tree(self):
+    exact = {"id": 102, "source_dir": str(MODULE_PATH.parent)}
+    decoy = {
+      "id": 7,
+      "name": "Subagents",
+      "slug": "subagents",
+      "source_dir": "/data/apps/not-subagents",
+    }
+
+    with patch.object(subagents, "_apps", return_value=[decoy, exact]):
+      self.assertEqual(subagents._app_id(), 102)
+
+    with patch.object(subagents, "_apps", return_value=[decoy]):
+      with self.assertRaisesRegex(subagents.SubagentError, "could not be found"):
+        subagents._app_id()
+
   def test_legacy_config_preserves_codex_and_keeps_claude_opt_in(self):
     config = subagents._normalize_config({"default": "gpt-5.6-sol"})
 

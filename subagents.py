@@ -64,11 +64,7 @@ def _apps() -> list[dict]:
 def _app_id() -> int:
   for app in _apps():
     source = str(app.get("source_dir") or "")
-    if (
-      app.get("slug") in ("subagents", "codex")
-      or app.get("name") == "Subagents"
-      or Path(source).resolve() == APP_DIR
-    ):
+    if Path(source).resolve() == APP_DIR:
       return int(app["id"])
   raise SubagentError("The installed Subagents app could not be found.")
 

@@ -1,7 +1,8 @@
 {
-  "id": "codex",
+  "id": "subagents",
+  "previous_id": "codex",
   "name": "Subagents",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Connect Claude or Codex, choose provider defaults, and run guarded delegated tasks that survive planned platform restarts.",
   "author": "mobius-os",
   "license": "MIT",
