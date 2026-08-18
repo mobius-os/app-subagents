@@ -6,6 +6,12 @@ import {
   InfoCircle,
 } from '@openai/apps-sdk-ui/components/Icon'
 import catalog from './models.json'
+import {
+  ACTIVE_STATUSES,
+  cancellationMessage,
+  createLatestRequest,
+  finishedSince,
+} from './delegationActivity.js'
 
 const CONFIG_KEY = 'config.json'
 const STATUS_KEY = 'status.json'
@@ -258,8 +264,6 @@ function runtimePresentation(runtime) {
   }
 }
 
-const ACTIVE_STATUSES = new Set(['starting', 'running', 'resuming', 'paused'])
-
 function formatNumber(value) {
   if (!Number.isFinite(value)) return null
   return new Intl.NumberFormat(undefined, { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value)
@@ -477,6 +481,9 @@ export default function Subagents({ appId, token }) {
   const [toast, setToast] = useState(null)
   const readySent = useRef(false)
   const migrationSaved = useRef(false)
+  const recentRef = useRef([])
+  const detailRequest = useRef(createLatestRequest())
+  const hasActiveRecent = recent.some((row) => ACTIVE_STATUSES.has(row.status))
 
   const models = useMemo(() => Object.fromEntries(
     PROVIDER_IDS.map((id) => [id, mergeModels(id, liveModels[id])])
@@ -545,6 +552,41 @@ export default function Subagents({ appId, token }) {
 
   useEffect(() => { refreshProviders() }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => { recentRef.current = recent }, [recent])
+
+  useEffect(() => {
+    if (!token || !hasActiveRecent) return undefined
+    let disposed = false
+    const headers = { Authorization: `Bearer ${token}` }
+    async function pollRecent() {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const res = await fetch('/api/delegations?limit=12', { headers })
+        if (!res.ok) return
+        const items = (await res.json()).items || []
+        if (disposed) return
+        const before = recentRef.current.find((row) => row.id === expanded)
+        const after = items.find((row) => row.id === expanded)
+        setRecent(items)
+        if (finishedSince(before, after)) {
+          loadRunDetail(after.id)
+        }
+      } catch (error) {
+        if (!disposed) window.mobius?.signal?.('error', { message: error.message, source: 'delegation-refresh' })
+      }
+    }
+    const timer = window.setInterval(pollRecent, 5000)
+    const onVisibility = () => { if (document.visibilityState === 'visible') pollRecent() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      disposed = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [token, hasActiveRecent, expanded]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => () => detailRequest.current.abort(), [])
+
   useEffect(() => {
     if (readySent.current || !config || connections == null) return
     readySent.current = true
@@ -582,38 +624,59 @@ export default function Subagents({ appId, token }) {
     }
   }
 
+  async function loadRunDetail(rowId) {
+    const request = detailRequest.current.begin()
+    setDetailBusy(true)
+    try {
+      const res = await fetch(`/api/delegations/${rowId}`, {
+        headers: { Authorization: `Bearer ${token}` }, signal: request.signal,
+      })
+      if (!res.ok) throw new Error(`Result returned ${res.status}`)
+      const next = await res.json()
+      if (detailRequest.current.isCurrent(request.sequence)) setDetail(next)
+    } catch (error) {
+      if (error.name === 'AbortError') return
+      if (detailRequest.current.isCurrent(request.sequence)) {
+        flash('That result could not be loaded. Try refreshing.', 2500)
+        window.mobius?.signal?.('error', { message: error.message, source: 'delegation-result' })
+      }
+    } finally {
+      if (detailRequest.current.isCurrent(request.sequence)) setDetailBusy(false)
+    }
+  }
+
   async function toggleRun(row) {
     if (expanded === row.id) {
-      setExpanded(null); setDetail(null); setCancelArmed(null); return
+      detailRequest.current.abort()
+      setExpanded(null); setDetail(null); setDetailBusy(false); setCancelArmed(null); return
     }
-    setExpanded(row.id); setDetail(null); setCancelArmed(null); setDetailBusy(true)
-    try {
-      const res = await fetch(`/api/delegations/${row.id}`, { headers: { Authorization: `Bearer ${token}` } })
-      if (!res.ok) throw new Error(`Result returned ${res.status}`)
-      setDetail(await res.json())
-    } catch (error) {
-      flash('That result could not be loaded. Try refreshing.', 2500)
-      window.mobius?.signal?.('error', { message: error.message, source: 'delegation-result' })
-    } finally { setDetailBusy(false) }
+    setExpanded(row.id); setDetail(null); setCancelArmed(null)
+    loadRunDetail(row.id)
   }
 
   async function cancelRun(row) {
     if (cancelArmed !== row.id) { setCancelArmed(row.id); return }
+    const request = detailRequest.current.begin()
     setCancelArmed(null); setDetailBusy(true)
     try {
       const res = await fetch(`/api/delegations/${row.id}/cancel`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: '{}', signal: request.signal,
       })
       if (!res.ok) throw new Error(`Stop returned ${res.status}`)
       const next = await res.json()
+      if (!detailRequest.current.isCurrent(request.sequence)) return
       setDetail(next)
       setRecent((items) => items.map((item) => item.id === row.id ? { ...item, ...next } : item))
-      flash('Task stopped')
+      flash(cancellationMessage(next.status))
       window.mobius?.signal?.('delegation_cancelled', { provider: row.provider })
     } catch (error) {
+      if (error.name === 'AbortError') return
       flash('The task is still running. Try again shortly.', 2600)
       window.mobius?.signal?.('error', { message: error.message, source: 'delegation-cancel' })
-    } finally { setDetailBusy(false) }
+    } finally {
+      if (detailRequest.current.isCurrent(request.sequence)) setDetailBusy(false)
+    }
   }
 
   return (
