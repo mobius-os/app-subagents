@@ -36,6 +36,37 @@ const CSS = `
 .sa-page { width: min(720px, 100%); margin: 0 auto; padding: 20px 16px 56px;
   display: flex; flex-direction: column; gap: 14px; }
 
+.sa-work { border-bottom: 1px solid var(--border); padding: 17px 17px 6px; }
+.sa-section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+.sa-section-title { font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+.sa-section-note { font-size: 11.5px; color: var(--muted); }
+.sa-run-list { display: grid; }
+.sa-run { border-top: 1px solid var(--border-light); }
+.sa-run:first-child { border-top: 0; }
+.sa-run-row { width: 100%; min-height: 58px; padding: 10px 0; border: 0; background: transparent;
+  color: inherit; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  gap: 12px; text-align: left; cursor: pointer; }
+.sa-run-row:hover .sa-run-name { color: var(--accent); }
+.sa-run-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.sa-run-name { min-width: 0; font-size: 12.5px; font-weight: 670; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-run-meta { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 8px; color: var(--muted); font-size: 10.8px; }
+.sa-run-status { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 680;
+  color: var(--muted); text-transform: capitalize; }
+.sa-run-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sa-run-status.is-active { color: var(--accent); }
+.sa-run-status.is-done { color: var(--green); }
+.sa-run-status.is-failed { color: color-mix(in srgb, var(--danger) 76%, var(--text)); }
+.sa-run-detail { margin: 0 0 12px; padding: 11px; border-radius: 11px; background: var(--surface2); }
+.sa-run-result { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 11.5px/1.5 var(--font); color: var(--text); }
+.sa-run-actions { margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+.sa-action { min-height: 38px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 11.5px; font-weight: 650; cursor: pointer; }
+.sa-action:hover { border-color: var(--accent); }
+.sa-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sa-action.is-danger { color: var(--danger); }
+.sa-empty { padding: 4px 0 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+
 /* mobius-ui:Card */
 .sa-card { border: 1px solid var(--border); border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 96%, var(--accent) 4%); overflow: clip;
@@ -227,6 +258,89 @@ function runtimePresentation(runtime) {
   }
 }
 
+const ACTIVE_STATUSES = new Set(['starting', 'running', 'resuming', 'paused'])
+
+function formatNumber(value) {
+  if (!Number.isFinite(value)) return null
+  return new Intl.NumberFormat(undefined, { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value)
+}
+
+function formatCost(value) {
+  if (!Number.isFinite(value)) return null
+  return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value)
+}
+
+function formatDuration(row) {
+  if (!row.started_at) return null
+  const start = new Date(row.started_at).getTime()
+  const end = row.ended_at ? new Date(row.ended_at).getTime() : Date.now()
+  const seconds = Math.max(0, Math.round((end - start) / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+function statusTone(status) {
+  if (ACTIVE_STATUSES.has(status)) return 'active'
+  if (status === 'completed') return 'done'
+  return 'failed'
+}
+
+function RecentWork({ rows, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+  return (
+    <section className="sa-card">
+      <div className="sa-work">
+        <div className="sa-section-head">
+          <div className="sa-section-title">Recent work</div>
+          <div className="sa-section-note">Latest 12 delegated tasks</div>
+        </div>
+        {!rows.length ? <div className="sa-empty">No delegated work yet. When an agent asks Claude or Codex for a bounded task, it will appear here.</div> : (
+          <div className="sa-run-list">
+            {rows.map((row) => {
+              const duration = formatDuration(row)
+              const tokens = formatNumber(row.usage?.total_tokens)
+              const cost = formatCost(row.usage?.cost_usd)
+              const open = expanded === row.id
+              const active = ACTIVE_STATUSES.has(row.status)
+              return (
+                <div className="sa-run" key={row.id}>
+                  <button className="sa-run-row" onClick={() => onToggle(row)} aria-expanded={open}>
+                    <div>
+                      <div className="sa-run-name">{row.task_key}</div>
+                      <div className="sa-run-meta">
+                        <span>{row.provider === 'claude' ? 'Claude' : 'Codex'}</span>
+                        <span>{row.scope === 'read' ? 'Read only' : 'Can edit'}</span>
+                        {duration && <span>{duration}</span>}
+                        {tokens && <span>{tokens} tokens</span>}
+                        {cost && <span>{cost}</span>}
+                      </div>
+                    </div>
+                    <span className={`sa-run-status is-${statusTone(row.status)}`}>{row.status.replace('_', ' ')}</span>
+                  </button>
+                  {open && (
+                    <div className="sa-run-detail">
+                      <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : 'No written result was recorded.')}</div>
+                      {active && (
+                        <div className="sa-run-actions">
+                          <button className="sa-action is-danger" onClick={() => onCancel(row)}>
+                            {cancelArmed === row.id ? 'Confirm stop' : 'Stop task'}
+                          </button>
+                          {cancelArmed === row.id && <span className="sa-section-note">Tap again to stop the provider run.</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function ProviderCard({ id, config, connection, models, runtime, busy, onPatch }) {
   const meta = catalog.providers[id]
   const connected = connection?.configured === true
@@ -353,6 +467,11 @@ export default function Subagents({ appId, token }) {
   const [connections, setConnections] = useState(null)
   const [liveModels, setLiveModels] = useState({})
   const [runtime, setRuntime] = useState({})
+  const [recent, setRecent] = useState([])
+  const [expanded, setExpanded] = useState(null)
+  const [detail, setDetail] = useState(null)
+  const [detailBusy, setDetailBusy] = useState(false)
+  const [cancelArmed, setCancelArmed] = useState(null)
   const [busy, setBusy] = useState(null)
   const [refreshing, setRefreshing] = useState(false)
   const [toast, setToast] = useState(null)
@@ -373,14 +492,16 @@ export default function Subagents({ appId, token }) {
     setRefreshing(true)
     try {
       const headers = { Authorization: `Bearer ${token}` }
-      const [statusRes, modelsRes, storedRuntime] = await Promise.all([
+      const [statusRes, modelsRes, workRes, storedRuntime] = await Promise.all([
         fetch('/api/auth/providers/status', { headers }),
         fetch('/api/auth/providers/models', { headers }),
+        fetch('/api/delegations?limit=12', { headers }),
         window.mobius?.storage?.get(STATUS_KEY).catch(() => null),
       ])
       if (!statusRes.ok) throw new Error(`Connection status returned ${statusRes.status}`)
       setConnections(await statusRes.json())
       if (modelsRes.ok) setLiveModels(await modelsRes.json())
+      if (workRes.ok) setRecent((await workRes.json()).items || [])
       if (storedRuntime?.providers) setRuntime(storedRuntime.providers)
       window.mobius?.signal?.('providers_refreshed')
     } catch (error) {
@@ -461,6 +582,40 @@ export default function Subagents({ appId, token }) {
     }
   }
 
+  async function toggleRun(row) {
+    if (expanded === row.id) {
+      setExpanded(null); setDetail(null); setCancelArmed(null); return
+    }
+    setExpanded(row.id); setDetail(null); setCancelArmed(null); setDetailBusy(true)
+    try {
+      const res = await fetch(`/api/delegations/${row.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) throw new Error(`Result returned ${res.status}`)
+      setDetail(await res.json())
+    } catch (error) {
+      flash('That result could not be loaded. Try refreshing.', 2500)
+      window.mobius?.signal?.('error', { message: error.message, source: 'delegation-result' })
+    } finally { setDetailBusy(false) }
+  }
+
+  async function cancelRun(row) {
+    if (cancelArmed !== row.id) { setCancelArmed(row.id); return }
+    setCancelArmed(null); setDetailBusy(true)
+    try {
+      const res = await fetch(`/api/delegations/${row.id}/cancel`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}',
+      })
+      if (!res.ok) throw new Error(`Stop returned ${res.status}`)
+      const next = await res.json()
+      setDetail(next)
+      setRecent((items) => items.map((item) => item.id === row.id ? { ...item, ...next } : item))
+      flash('Task stopped')
+      window.mobius?.signal?.('delegation_cancelled', { provider: row.provider })
+    } catch (error) {
+      flash('The task is still running. Try again shortly.', 2600)
+      window.mobius?.signal?.('error', { message: error.message, source: 'delegation-cancel' })
+    } finally { setDetailBusy(false) }
+  }
+
   return (
     <div className="sa-root">
       <style>{CSS}</style>
@@ -483,11 +638,15 @@ export default function Subagents({ appId, token }) {
             <div className="sa-skeleton" />
           </>
         ) : (
-          PROVIDER_IDS.map((id) => (
-            <ProviderCard key={id} id={id} config={config.providers[id]}
-              connection={connections?.[id]} models={models[id]} runtime={runtime[id]}
-              busy={busy} onPatch={patchProvider} />
-          ))
+          <>
+            <RecentWork rows={recent} expanded={expanded} detail={detail} detailBusy={detailBusy}
+              cancelArmed={cancelArmed} onToggle={toggleRun} onCancel={cancelRun} />
+            {PROVIDER_IDS.map((id) => (
+              <ProviderCard key={id} id={id} config={config.providers[id]}
+                connection={connections?.[id]} models={models[id]} runtime={runtime[id]}
+                busy={busy} onPatch={patchProvider} />
+            ))}
+          </>
         )}
       </main>
       {toast && <div className="sa-toast" role="status">{toast}</div>}

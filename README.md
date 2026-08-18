@@ -21,6 +21,9 @@ One optional control surface for delegating bounded work to **Claude** and
 - **Conservative recovery** may reseed lost read-only sessions from retained
   child history, while lost write sessions stop for review. Both providers
   retain their normal account-derived spending limits and accounting.
+- **Visible operations** show recent task status, duration, token usage, and
+  results in the app, with a deliberate two-step stop control for active work.
+  The helper exposes the same list, status/history, and cancellation boundary.
 
 ## Durable state
 
