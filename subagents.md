@@ -21,14 +21,13 @@ should wake this chat after it finishes—not merely to parallelize ordinary wor
 
 ## 1. Read the live state
 
-Find the installed app named `Subagents` (legacy slug `codex`, current slug
-`subagents`) with:
+Find the installed app named `Subagents` and request the source path explicitly:
 
 ```bash
-python "$SCRIPTS_DIR/list_apps.py"
+python "$SCRIPTS_DIR/list_apps.py" --name Subagents --with-source-dir
 ```
 
-Its `source_dir` contains `subagents.py`. Before choosing a provider, run:
+Use the `source_dir` from the matching row. Before choosing a provider, run:
 
 ```bash
 python <source_dir>/subagents.py snapshot
