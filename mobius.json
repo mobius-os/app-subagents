@@ -16,6 +16,7 @@
     "max_bytes": 1048576
   },
   "source_files": [
+    "delegationActivity.js",
     "models.json",
     "subagents.md",
     "subagents.py",

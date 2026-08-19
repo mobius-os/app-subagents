@@ -123,6 +123,26 @@ Point to real files instead of pasting large context. A delegated result is
 evidence or a candidate change, not a substitute for your own judgment. Review
 its output, verify any edits, and tell the partner which provider did what.
 
+Bound reviews by the decision they must change and the smallest authoritative
+source set that can answer it. Do not hand one child several independent audit
+themes merely because it can inspect a large tree; split genuinely independent
+questions or keep the synthesis local. High effort is not a substitute for a
+clear stopping condition.
+
+The app shows recent runs, duration, usage, results, and live status. The same
+controls are available from the helper when terminal output is more useful:
+
+```bash
+python <source_dir>/subagents.py list --limit 12
+python <source_dir>/subagents.py status <delegation-id> [--history]
+python <source_dir>/subagents.py cancel <delegation-id>
+```
+
+Use cancellation only when the task is no longer wanted or is clearly running
+away; inspecting status is read-only. The complete child history is retained
+for recovery and audit, while the parent should still receive a concise
+synthesis rather than a transcript dump.
+
 Do not end a turn while a blocking child runs. Use `--background` when the turn
 should end first; after a planned restart, rerun a blocking command with the
 same `--name` to attach to its resumed child.
