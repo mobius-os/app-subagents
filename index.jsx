@@ -24,11 +24,14 @@ const CSS = `
   background: var(--bg); color: var(--text); font-family: var(--font); }
 /* /mobius-ui:Root */
 
-.sa-header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px;
-  min-height: 64px; padding: max(12px, env(safe-area-inset-top)) 16px 12px;
+.sa-header { position: sticky; top: 0; z-index: 5; min-height: 64px;
   background: color-mix(in srgb, var(--surface) 94%, transparent); border-bottom: 1px solid var(--border);
   backdrop-filter: blur(16px); }
+.sa-header-inner { width: min(752px, 100%); margin-inline: auto; display: flex; align-items: center; gap: 12px;
+  padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
 .sa-logo { width: 40px; height: 40px; flex: 0 0 auto; object-fit: contain; display: block; }
+.sa-logo-fallback { place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent); font-weight: 750; }
 .sa-titles { min-width: 0; }
 .sa-title { font-size: 16px; font-weight: 680; letter-spacing: -.015em; }
 .sa-subtitle { margin-top: 2px; font-size: 12.5px; color: var(--muted); }
@@ -72,6 +75,13 @@ const CSS = `
 .sa-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .sa-action.is-danger { color: var(--danger); }
 .sa-empty { padding: 4px 0 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.sa-badge { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;
+  font-size: 10px; font-weight: 660; line-height: 1.65; background: var(--surface2); color: var(--muted); }
+.sa-badge.is-claude { color: color-mix(in srgb, #D97752 80%, var(--text)); background: color-mix(in srgb, #D97752 12%, var(--surface2)); }
+.sa-badge.is-codex { color: color-mix(in srgb, #5B4BE2 82%, var(--text)); background: color-mix(in srgb, #5B4BE2 14%, var(--surface2)); }
+.sa-chat-runs { border-top: 1px solid var(--border-light); padding-left: 12px;
+  margin: 2px 0 10px; }
+.sa-chat-runs .sa-run:first-child { border-top: 0; }
 
 /* mobius-ui:Card */
 .sa-card { border: 1px solid var(--border); border-radius: 16px;
@@ -291,48 +301,114 @@ function statusTone(status) {
   return 'failed'
 }
 
-function RecentWork({ rows, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex' }
+
+// Rows arrive newest-first, so first-seen order keeps the most recently active
+// chat on top and each chat's runs newest-first.
+function groupChats(rows) {
+  const order = []
+  const byChat = new Map()
+  for (const row of rows) {
+    const id = row.parent_chat_id || 'unknown'
+    let group = byChat.get(id)
+    if (!group) {
+      group = { chatId: id, title: null, providers: new Set(), models: new Set(), active: 0, runs: [] }
+      byChat.set(id, group)
+      order.push(id)
+    }
+    if (!group.title && row.parent_chat_title) group.title = row.parent_chat_title
+    if (row.provider) group.providers.add(row.provider)
+    if (row.model) group.models.add(row.model)
+    if (ACTIVE_STATUSES.has(row.status)) group.active += 1
+    group.runs.push(row)
+  }
+  return order.map((id) => {
+    const g = byChat.get(id)
+    return {
+      chatId: id,
+      title: g.title || (g.runs[0]?.task_key ? g.runs[0].task_key : `Chat ${id.slice(0, 8)}…`),
+      providers: [...g.providers],
+      models: [...g.models],
+      active: g.active,
+      count: g.runs.length,
+      runs: g.runs,
+    }
+  })
+}
+
+function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+  const duration = formatDuration(row)
+  const tokens = formatNumber(row.usage?.total_tokens)
+  const cost = formatCost(row.usage?.cost_usd)
+  const open = expanded === row.id
+  const active = ACTIVE_STATUSES.has(row.status)
+  return (
+    <div className="sa-run">
+      <button className="sa-run-row" onClick={() => onToggle(row)} aria-expanded={open}>
+        <div>
+          <div className="sa-run-name">{row.task_key}</div>
+          <div className="sa-run-meta">
+            <span>{PROVIDER_LABEL[row.provider] || row.provider}</span>
+            {row.model && <span>{row.model}</span>}
+            <span>{row.scope === 'read' ? 'Read only' : 'Can edit'}</span>
+            {duration && <span>{duration}</span>}
+            {tokens && <span>{tokens} tokens</span>}
+            {cost && <span>{cost}</span>}
+          </div>
+        </div>
+        <span className={`sa-run-status is-${statusTone(row.status)}`}>{row.status.replace('_', ' ')}</span>
+      </button>
+      {open && (
+        <div className="sa-run-detail">
+          <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : 'No written result was recorded.')}</div>
+          {active && (
+            <div className="sa-run-actions">
+              <button className="sa-action is-danger" onClick={() => onCancel(row)}>
+                {cancelArmed === row.id ? 'Confirm stop' : 'Stop task'}
+              </button>
+              {cancelArmed === row.id && <span className="sa-section-note">Tap again to stop the provider run.</span>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+  const chats = useMemo(() => groupChats(rows), [rows])
   return (
     <section className="sa-card">
       <div className="sa-work">
         <div className="sa-section-head">
-          <div className="sa-section-title">Recent work</div>
-          <div className="sa-section-note">Latest 12 delegated tasks</div>
+          <div className="sa-section-title">Chats using subagents</div>
+          {chats.length > 0 && (
+            <div className="sa-section-note">{chats.length} chat{chats.length === 1 ? '' : 's'} · {rows.length} run{rows.length === 1 ? '' : 's'}</div>
+          )}
         </div>
-        {!rows.length ? <div className="sa-empty">No delegated work yet. When an agent asks Claude or Codex for a bounded task, it will appear here.</div> : (
+        {!chats.length ? <div className="sa-empty">No delegated work yet. When an agent asks Claude or Codex for a bounded task, the chat that ran it will appear here.</div> : (
           <div className="sa-run-list">
-            {rows.map((row) => {
-              const duration = formatDuration(row)
-              const tokens = formatNumber(row.usage?.total_tokens)
-              const cost = formatCost(row.usage?.cost_usd)
-              const open = expanded === row.id
-              const active = ACTIVE_STATUSES.has(row.status)
+            {chats.map((chat) => {
+              const open = expandedChat === chat.chatId
               return (
-                <div className="sa-run" key={row.id}>
-                  <button className="sa-run-row" onClick={() => onToggle(row)} aria-expanded={open}>
+                <div className="sa-run" key={chat.chatId}>
+                  <button className="sa-run-row" onClick={() => onToggleChat(chat.chatId)} aria-expanded={open}>
                     <div>
-                      <div className="sa-run-name">{row.task_key}</div>
+                      <div className="sa-run-name">{chat.title}</div>
                       <div className="sa-run-meta">
-                        <span>{row.provider === 'claude' ? 'Claude' : 'Codex'}</span>
-                        <span>{row.scope === 'read' ? 'Read only' : 'Can edit'}</span>
-                        {duration && <span>{duration}</span>}
-                        {tokens && <span>{tokens} tokens</span>}
-                        {cost && <span>{cost}</span>}
+                        <span>{chat.count} run{chat.count === 1 ? '' : 's'}</span>
+                        {chat.providers.map((p) => <span key={p} className={`sa-badge is-${p}`}>{PROVIDER_LABEL[p] || p}</span>)}
+                        {chat.models.map((m) => <span key={m}>{m}</span>)}
                       </div>
                     </div>
-                    <span className={`sa-run-status is-${statusTone(row.status)}`}>{row.status.replace('_', ' ')}</span>
+                    {chat.active > 0 && <span className="sa-run-status is-active">{chat.active} running</span>}
                   </button>
                   {open && (
-                    <div className="sa-run-detail">
-                      <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : 'No written result was recorded.')}</div>
-                      {active && (
-                        <div className="sa-run-actions">
-                          <button className="sa-action is-danger" onClick={() => onCancel(row)}>
-                            {cancelArmed === row.id ? 'Confirm stop' : 'Stop task'}
-                          </button>
-                          {cancelArmed === row.id && <span className="sa-section-note">Tap again to stop the provider run.</span>}
-                        </div>
-                      )}
+                    <div className="sa-chat-runs">
+                      {chat.runs.map((row) => (
+                        <RunRow key={row.id} row={row} expanded={expanded} detail={detail}
+                          detailBusy={detailBusy} cancelArmed={cancelArmed} onToggle={onToggle} onCancel={onCancel} />
+                      ))}
                     </div>
                   )}
                 </div>
@@ -472,6 +548,7 @@ export default function Subagents({ appId, token }) {
   const [liveModels, setLiveModels] = useState({})
   const [runtime, setRuntime] = useState({})
   const [recent, setRecent] = useState([])
+  const [expandedChat, setExpandedChat] = useState(null)
   const [expanded, setExpanded] = useState(null)
   const [detail, setDetail] = useState(null)
   const [detailBusy, setDetailBusy] = useState(false)
@@ -502,7 +579,7 @@ export default function Subagents({ appId, token }) {
       const [statusRes, modelsRes, workRes, storedRuntime] = await Promise.all([
         fetch('/api/auth/providers/status', { headers }),
         fetch('/api/auth/providers/models', { headers }),
-        fetch('/api/delegations?limit=12', { headers }),
+        fetch('/api/delegations?limit=200', { headers }),
         window.mobius?.storage?.get(STATUS_KEY).catch(() => null),
       ])
       if (!statusRes.ok) throw new Error(`Connection status returned ${statusRes.status}`)
@@ -561,7 +638,7 @@ export default function Subagents({ appId, token }) {
     async function pollRecent() {
       if (document.visibilityState === 'hidden') return
       try {
-        const res = await fetch('/api/delegations?limit=12', { headers })
+        const res = await fetch('/api/delegations?limit=200', { headers })
         if (!res.ok) return
         const items = (await res.json()).items || []
         if (disposed) return
@@ -645,6 +722,12 @@ export default function Subagents({ appId, token }) {
     }
   }
 
+  function toggleChat(chatId) {
+    detailRequest.current.abort()
+    setExpanded(null); setDetail(null); setDetailBusy(false); setCancelArmed(null)
+    setExpandedChat((current) => (current === chatId ? null : chatId))
+  }
+
   async function toggleRun(row) {
     if (expanded === row.id) {
       detailRequest.current.abort()
@@ -683,7 +766,9 @@ export default function Subagents({ appId, token }) {
     <div className="sa-root">
       <style>{CSS}</style>
       <header className="sa-header">
-        <img className="sa-logo" src={`/api/apps/${appId}/icon?size=64`} alt="" />
+        <div className="sa-header-inner">
+        <img className="sa-logo" src={`/api/apps/${appId}/icon?size=64`} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; event.currentTarget.nextElementSibling.style.display = 'grid' }} />
+        <span className="sa-logo sa-logo-fallback" style={{ display: 'none' }} aria-hidden="true">S</span>
         <div className="sa-titles">
           <div className="sa-title">Subagents</div>
           <div className="sa-subtitle">Claude and Codex delegation</div>
@@ -692,6 +777,7 @@ export default function Subagents({ appId, token }) {
           onClick={refreshProviders} disabled={refreshing} aria-label="Refresh provider status">
           <ArrowRotateCw width={18} height={18} />
         </button>
+        </div>
       </header>
 
       <main className="sa-page">
@@ -702,13 +788,14 @@ export default function Subagents({ appId, token }) {
           </>
         ) : (
           <>
-            <RecentWork rows={recent} expanded={expanded} detail={detail} detailBusy={detailBusy}
-              cancelArmed={cancelArmed} onToggle={toggleRun} onCancel={cancelRun} />
             {PROVIDER_IDS.map((id) => (
               <ProviderCard key={id} id={id} config={config.providers[id]}
                 connection={connections?.[id]} models={models[id]} runtime={runtime[id]}
                 busy={busy} onPatch={patchProvider} />
             ))}
+            <RecentWork rows={recent} expandedChat={expandedChat} onToggleChat={toggleChat}
+              expanded={expanded} detail={detail} detailBusy={detailBusy}
+              cancelArmed={cancelArmed} onToggle={toggleRun} onCancel={cancelRun} />
           </>
         )}
       </main>
