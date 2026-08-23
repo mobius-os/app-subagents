@@ -11,6 +11,7 @@ import {
   cancellationMessage,
   createLatestRequest,
   finishedSince,
+  groupDelegationsByChat,
 } from './delegationActivity.js'
 
 const CONFIG_KEY = 'config.json'
@@ -303,39 +304,6 @@ function statusTone(status) {
 
 const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex' }
 
-// Rows arrive newest-first, so first-seen order keeps the most recently active
-// chat on top and each chat's runs newest-first.
-function groupChats(rows) {
-  const order = []
-  const byChat = new Map()
-  for (const row of rows) {
-    const id = row.parent_chat_id || 'unknown'
-    let group = byChat.get(id)
-    if (!group) {
-      group = { chatId: id, title: null, providers: new Set(), models: new Set(), active: 0, runs: [] }
-      byChat.set(id, group)
-      order.push(id)
-    }
-    if (!group.title && row.parent_chat_title) group.title = row.parent_chat_title
-    if (row.provider) group.providers.add(row.provider)
-    if (row.model) group.models.add(row.model)
-    if (ACTIVE_STATUSES.has(row.status)) group.active += 1
-    group.runs.push(row)
-  }
-  return order.map((id) => {
-    const g = byChat.get(id)
-    return {
-      chatId: id,
-      title: g.title || (g.runs[0]?.task_key ? g.runs[0].task_key : `Chat ${id.slice(0, 8)}…`),
-      providers: [...g.providers],
-      models: [...g.models],
-      active: g.active,
-      count: g.runs.length,
-      runs: g.runs,
-    }
-  })
-}
-
 function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
   const duration = formatDuration(row)
   const tokens = formatNumber(row.usage?.total_tokens)
@@ -376,7 +344,7 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
 }
 
 function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
-  const chats = useMemo(() => groupChats(rows), [rows])
+  const chats = useMemo(() => groupDelegationsByChat(rows), [rows])
   return (
     <section className="sa-card">
       <div className="sa-work">
