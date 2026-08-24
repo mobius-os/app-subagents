@@ -26,8 +26,7 @@ const CSS = `
 /* /mobius-ui:Root */
 
 .sa-header { position: sticky; top: 0; z-index: 5; min-height: 64px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent); border-bottom: 1px solid var(--border);
-  backdrop-filter: blur(16px); }
+  background: var(--bg); border-bottom: 1px solid var(--border); }
 .sa-header-inner { width: min(752px, 100%); margin-inline: auto; display: flex; align-items: center; gap: 12px;
   padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
 .sa-logo { width: 40px; height: 40px; flex: 0 0 auto; object-fit: contain; display: block; }
@@ -179,6 +178,24 @@ const CSS = `
   .sa-track, .sa-knob, .sa-summary svg { transition: none; }
   .sa-refresh.is-spinning svg, .sa-skeleton::after { animation: none; }
 }
+
+/* mobius-ui:CenteredRail v1 */
+@media (min-width: 900px) {
+  .sa-root {
+    background: radial-gradient(ellipse 62% 88% at 50% 48%,
+      color-mix(in srgb, var(--accent) 9%, var(--surface)) 0%,
+      color-mix(in srgb, var(--accent) 3%, var(--surface)) 38%,
+      var(--surface) 100%);
+  }
+  .sa-root::before {
+    content: ""; position: absolute; inset-block: 0; left: 50%;
+    width: min(100%, 752px); transform: translateX(-50%);
+    background: var(--bg); pointer-events: none;
+  }
+  .sa-header { width: min(100%, 752px); margin-inline: auto; }
+
+}
+/* /mobius-ui:CenteredRail */
 `
 
 function ClaudeMark() {
