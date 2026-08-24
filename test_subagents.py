@@ -19,7 +19,7 @@ SPEC.loader.exec_module(subagents)
 def run_args(prompt_path: str, *, name: str, background: bool = False):
   return argparse.Namespace(
     provider="codex", name=name, scope="read", model=None,
-    effort=None, explicit=False, prompt_file=prompt_path, cwd="/data",
+    effort=None, explicit=False, prompt_file=prompt_path, prompt=None, cwd="/data",
     background=background, timeout=10, poll_interval=0.001,
   )
 
@@ -70,6 +70,39 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertFalse(config["providers"]["claude"]["enabled"])
     self.assertFalse(config["providers"]["codex"]["enabled"])
 
+  def test_delegated_snapshot_uses_the_confined_capability_route(self):
+    payload = {
+      "app_id": 102,
+      "config": {"providers": {
+        "claude": {"enabled": True}, "codex": {"enabled": True},
+      }},
+      "runtime": {"providers": {}},
+      "connections": {
+        "claude": {"configured": True}, "codex": {"configured": True},
+      },
+      "models": {
+        "claude": [{"id": "claude-sonnet-4-6", "name": "Sonnet"}],
+        "codex": [{"id": "gpt-5.6-sol", "name": "Sol"}],
+      },
+    }
+    with patch.dict(os.environ, {"MOBIUS_DELEGATION_ID": "d1"}), \
+         patch.object(subagents, "_api", return_value=payload) as api:
+      value = subagents.snapshot()
+    api.assert_called_once_with("/api/delegations/capabilities")
+    self.assertTrue(value["providers"]["claude"]["connected"])
+    self.assertTrue(value["providers"]["codex"]["enabled"])
+
+  def test_delegated_record_never_touches_owner_visible_status(self):
+    with patch.dict(os.environ, {"MOBIUS_DELEGATION_ID": "d1"}), \
+         patch.object(subagents, "_storage_get") as storage_get, \
+         patch.object(subagents, "_storage_put") as storage_put:
+      self.assertIsNone(
+        subagents._record(102, "codex", "available", "Ready.", "gpt-5.6-sol")
+      )
+
+    storage_get.assert_not_called()
+    storage_put.assert_not_called()
+
   def test_model_alias_resolves_only_to_registry_entry(self):
     state = {
       "default_model": "gpt-5.6-sol",
@@ -96,19 +129,6 @@ class SubagentsContractTests(unittest.TestCase):
       subagents._classify_failure("upstream returned 503"),
       "temporarily_unavailable",
     )
-
-  def test_depth_limit_stops_before_snapshot_or_spend(self):
-    args = argparse.Namespace(provider="codex")
-    original = os.environ.get("MOBIUS_SUBAGENT_DEPTH")
-    os.environ["MOBIUS_SUBAGENT_DEPTH"] = "1"
-    try:
-      with self.assertRaisesRegex(subagents.SubagentError, "maximum"):
-        subagents.run(args)
-    finally:
-      if original is None:
-        os.environ.pop("MOBIUS_SUBAGENT_DEPTH", None)
-      else:
-        os.environ["MOBIUS_SUBAGENT_DEPTH"] = original
 
   def test_run_submits_named_durable_work_and_returns_result(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:
@@ -137,6 +157,24 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertEqual(calls[0][2]["task_key"], "audit-restart")
     self.assertEqual(calls[0][2]["parent_chat_id"], "parent-chat")
     self.assertIs(calls[0][2]["notify_parent_on_complete"], False)
+
+  def test_run_accepts_an_inline_prompt_without_reading_a_file(self):
+    args = run_args("/does/not/exist", name="inline-contract")
+    args.prompt_file = None
+    args.prompt = "Review the bounded child contract."
+    calls = []
+
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      return {"id": "delegation-inline", "status": "completed", "result": "Clear."}
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", side_effect=fake_api), \
+         patch.object(subagents, "_record"):
+      self.assertEqual(subagents.run(args), 0)
+
+    self.assertEqual(calls[0][2]["prompt"], "Review the bounded child contract.")
 
   def test_completed_truncated_result_names_the_durable_transcript(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:

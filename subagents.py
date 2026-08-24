@@ -21,7 +21,6 @@ from urllib.request import Request, urlopen
 APP_DIR = Path(__file__).resolve().parent
 CATALOG = json.loads((APP_DIR / "models.json").read_text(encoding="utf-8"))
 PROVIDERS = ("claude", "codex")
-MAX_DEPTH = 1
 
 
 class SubagentError(RuntimeError):
@@ -136,11 +135,24 @@ def _models() -> dict:
 
 
 def snapshot() -> dict:
-  app_id = _app_id()
-  config = _normalize_config(_storage_get(app_id, "config.json"))
-  runtime = _storage_get(app_id, "status.json").get("providers", {})
-  connections = _connections()
-  live_models = _models()
+  delegated = bool(os.environ.get("MOBIUS_DELEGATION_ID"))
+  if delegated:
+    capabilities = _api("/api/delegations/capabilities")
+    capabilities = capabilities if isinstance(capabilities, dict) else {}
+    app_id = int(capabilities.get("app_id") or 0)
+    if app_id < 1:
+      raise SubagentError("Delegated Subagents capabilities are unavailable.")
+    config = _normalize_config(capabilities.get("config") or {})
+    raw_runtime = capabilities.get("runtime") or {}
+    runtime = raw_runtime.get("providers", {}) if isinstance(raw_runtime, dict) else {}
+    connections = capabilities.get("connections") or {}
+    live_models = capabilities.get("models") or {}
+  else:
+    app_id = _app_id()
+    config = _normalize_config(_storage_get(app_id, "config.json"))
+    runtime = _storage_get(app_id, "status.json").get("providers", {})
+    connections = _connections()
+    live_models = _models()
   out = {"app_id": app_id, "providers": {}}
   for provider in PROVIDERS:
     pref = config["providers"][provider]
@@ -194,6 +206,8 @@ def _resolve_model(provider: str, requested: str | None, state: dict) -> str | N
 
 
 def _record(app_id: int, provider: str, state: str, detail: str, model: str | None):
+  if os.environ.get("MOBIUS_DELEGATION_ID"):
+    return
   status = _storage_get(app_id, "status.json")
   providers = status.get("providers")
   providers = providers if isinstance(providers, dict) else {}
@@ -222,11 +236,6 @@ def _classify_failure(text: str) -> str:
 
 
 def run(args: argparse.Namespace) -> int:
-  depth = int(os.environ.get("MOBIUS_SUBAGENT_DEPTH", "0") or 0)
-  if depth >= MAX_DEPTH:
-    raise SubagentError(
-      f"Delegation depth {depth} reached the maximum ({MAX_DEPTH})."
-    )
   snap = snapshot()
   state = snap["providers"][args.provider]
   if not state["connected"]:
@@ -238,7 +247,11 @@ def run(args: argparse.Namespace) -> int:
     )
   model = _resolve_model(args.provider, args.model, state)
   effort = args.effort or state.get("default_effort")
-  prompt = Path(args.prompt_file).read_text(encoding="utf-8").strip()
+  prompt = (
+    args.prompt.strip()
+    if args.prompt is not None
+    else Path(args.prompt_file).read_text(encoding="utf-8").strip()
+  )
   if not prompt:
     raise SubagentError("The delegated prompt is empty.")
   parent_chat_id = os.environ.get("CHAT_ID", "").strip()
@@ -380,7 +393,9 @@ def build_parser() -> argparse.ArgumentParser:
   run_parser.add_argument("--model")
   run_parser.add_argument("--effort")
   run_parser.add_argument("--explicit", action="store_true")
-  run_parser.add_argument("--prompt-file", required=True)
+  prompt_group = run_parser.add_mutually_exclusive_group(required=True)
+  prompt_group.add_argument("--prompt-file")
+  prompt_group.add_argument("--prompt", help="Inline bounded prompt for delegated owners.")
   run_parser.add_argument("--cwd")
   run_parser.add_argument(
     "--background", action="store_true",

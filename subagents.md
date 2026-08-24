@@ -73,7 +73,7 @@ python <source_dir>/subagents.py run \
   [--effort <level>] \
   [--explicit] \
   [--background] \
-  --prompt-file <path>
+  (--prompt-file <path> | --prompt '<bounded contract>')
 ```
 
 Without `--background`, the helper waits and prints the result in this turn.
@@ -89,8 +89,11 @@ The helper:
 - treats `(parent logical run, --name)` as the immutable idempotency key, so
   re-running the exact command after a retry or planned restart ATTACHES to the
   existing child instead of spending twice;
-- sets a maximum delegation depth of one and blocks child questions, skills,
-  Memory, recent-chat context, and further agent/workflow launches;
+- permits up to four local ownership levels through this same guarded helper;
+  each child sees only its own bounded contract, owns its immediate children,
+  and reports a concise result upward rather than leaking descendant history;
+  owner questions, Memory, recent-chat context, and every other recursive
+  agent/workflow mechanism remain blocked;
 - uses a read-only sandbox/permission mode for reviews and a write-capable mode
   only when the current task already authorizes edits;
 - survives a platform restart: rerun the same blocking command to reattach, or
@@ -107,6 +110,9 @@ Do not invoke `claude -p` or `codex exec` directly when this installed app is
 available; the helper is the recursion, configuration, durable identity, and
 status boundary. Choose a short semantic task name (for example
 `audit-restart-recovery`) and reuse it only for that exact prompt + policy.
+Delegated children normally use `--prompt` because confined read mode does not
+create temporary files; top-level agents should keep using a prompt file for
+longer contracts.
 
 ## 4. Shape the prompt and verify
 
