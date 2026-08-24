@@ -92,6 +92,17 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertTrue(value["providers"]["claude"]["connected"])
     self.assertTrue(value["providers"]["codex"]["enabled"])
 
+  def test_delegated_record_never_touches_owner_visible_status(self):
+    with patch.dict(os.environ, {"MOBIUS_DELEGATION_ID": "d1"}), \
+         patch.object(subagents, "_storage_get") as storage_get, \
+         patch.object(subagents, "_storage_put") as storage_put:
+      self.assertIsNone(
+        subagents._record(102, "codex", "available", "Ready.", "gpt-5.6-sol")
+      )
+
+    storage_get.assert_not_called()
+    storage_put.assert_not_called()
+
   def test_model_alias_resolves_only_to_registry_entry(self):
     state = {
       "default_model": "gpt-5.6-sol",
