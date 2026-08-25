@@ -27,7 +27,7 @@ const CSS = `
 
 .sa-header { position: sticky; top: 0; z-index: 5; min-height: 64px;
   background: var(--bg); border-bottom: 1px solid var(--border); }
-.sa-header-inner { width: min(752px, 100%); margin-inline: auto; display: flex; align-items: center; gap: 12px;
+.sa-header-inner { width: min(760px, 100%); margin-inline: auto; display: flex; align-items: center; gap: 12px;
   padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
 .sa-logo { width: 40px; height: 40px; flex: 0 0 auto; object-fit: contain; display: block; }
 .sa-logo-fallback { place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -182,16 +182,9 @@ const CSS = `
 /* mobius-ui:CenteredRail v1 */
 @media (min-width: 900px) {
   .sa-root {
-    background:
-      linear-gradient(var(--bg), var(--bg)) center / min(100%, 752px) 100% no-repeat,
-      radial-gradient(ellipse 76% 112% at 50% 46%,
-        color-mix(in srgb, var(--accent) 18%, var(--bg)) 0%,
-        color-mix(in srgb, var(--accent) 7%, var(--bg)) 46%,
-        color-mix(in srgb, var(--text) 2%, var(--bg)) 100%);
 
   }
-  .sa-header { width: min(100%, 752px); margin-inline: auto; }
-
+  .sa-header { width: min(100%, 760px); margin-inline: auto; }
 }
 /* /mobius-ui:CenteredRail */
 `
