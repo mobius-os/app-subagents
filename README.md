@@ -11,16 +11,16 @@ One optional control surface for delegating bounded work to **Claude** and
 - **Provider-specific defaults** expose the live model registry and compatible
   effort levels without rewriting protected CLI configuration.
 - **One provider-neutral skill** reads the current settings at delegation time
-  and runs through `subagents.py`, which enforces a one-hop recursion limit,
-  preserves the task's read/write scope, records real runtime outcomes, and
-  never silently swaps provider or model. Provider/account spending limits
-  remain authoritative.
+  and runs through `subagents.py`, which preserves direct-child ownership and
+  the task's read/write scope without an artificial recursion ceiling, records
+  real runtime outcomes, and never silently swaps provider or model.
 - **Durable child tasks** are hidden app-owned chats supervised by Möbius's
   ordinary SDK/session/restart machinery. A stable task name attaches retries
   and post-restart parents to the same child rather than spending twice.
 - **Conservative recovery** may reseed lost read-only sessions from retained
-  child history, while lost write sessions stop for review. Both providers
-  retain their normal account-derived spending limits and accounting.
+  child history, while lost write sessions stop for review. Möbius records
+  provider usage and quota outcomes but does not impose an ordinary local
+  spending budget.
 - **Visible operations** show recent task status, duration, token usage, and
   results in the app, with a deliberate two-step stop control for active work.
   The helper exposes the same list, status/history, and cancellation boundary.

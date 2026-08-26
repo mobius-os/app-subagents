@@ -26,9 +26,9 @@ const CSS = `
 /* /mobius-ui:Root */
 
 .sa-header { position: sticky; top: 0; z-index: 5; min-height: 64px;
-  background: var(--bg); border-bottom: 1px solid var(--border); }
+  background: var(--bg); }
 .sa-header-inner { width: min(760px, 100%); margin-inline: auto; display: flex; align-items: center; gap: 12px;
-  padding: max(12px, env(safe-area-inset-top)) 16px 12px; }
+  padding: max(12px, env(safe-area-inset-top)) 16px 12px; border-bottom: 1px solid var(--border); }
 .sa-logo { width: 40px; height: 40px; flex: 0 0 auto; object-fit: contain; display: block; }
 .sa-logo-fallback { place-items: center; border-radius: 10px; background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent); font-weight: 750; }
