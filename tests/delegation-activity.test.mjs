@@ -56,5 +56,5 @@ test('delegation grouping keeps legacy runs separate and groups real chats', () 
 test('compact header uses an inset hairline instead of an edge-to-edge border', () => {
   const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   assert.match(source, /\.sa-header-inner::after\s*\{[^}]*inset-inline:\s*16px/s)
-  assert.doesNotMatch(source, /\.sa-header-inner\s*\{[^}]*border-bottom/s)
+  assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
 })
