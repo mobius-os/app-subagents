@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -50,4 +51,10 @@ test('delegation grouping keeps legacy runs separate and groups real chats', () 
   assert.equal(groups[2].active, 1)
   assert.deepEqual(groups[2].providers, ['codex', 'claude'])
   assert.deepEqual(groups[2].runs.map((run) => run.id), ['r3', 'r4'])
+})
+
+test('compact header uses an inset hairline instead of an edge-to-edge border', () => {
+  const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
+  assert.match(source, /\.sa-header-inner::after\s*\{[^}]*inset-inline:\s*16px/s)
+  assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
 })

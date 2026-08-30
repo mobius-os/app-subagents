@@ -1,6 +1,6 @@
 ---
 name: subagents
-description: Read before delegating a bounded task to Claude or Codex. This capability is owned by the installed Subagents app: honor each provider's live connection and enable state, use its configured model/effort defaults, run through the app's guarded helper, prevent recursive delegation, and report which provider did what.
+description: Read before delegating a bounded task to Claude or Codex. This capability is owned by the installed Subagents app: honor each provider's live connection and enable state, use its configured model/effort defaults, run through the app's guarded helper, preserve parent tool access, and report which provider did what.
 ---
 
 # Delegating to a subagent
@@ -89,16 +89,19 @@ The helper:
 - treats `(parent logical run, --name)` as the immutable idempotency key, so
   re-running the exact command after a retry or planned restart ATTACHES to the
   existing child instead of spending twice;
-- permits up to four local ownership levels through this same guarded helper;
-  each child sees only its own bounded contract, owns its immediate children,
+- permits useful local decomposition without an artificial recursion ceiling;
+  each child sees only its own bounded contract, inherits the parent agent's
+  usable local and connected tools, owns its immediate children,
   and reports a concise result upward rather than leaking descendant history;
-  owner questions, Memory, recent-chat context, and every other recursive
-  agent/workflow mechanism remain blocked;
-- uses a read-only sandbox/permission mode for reviews and a write-capable mode
-  only when the current task already authorizes edits;
+  owner questions, Memory, and recent-chat context remain blocked; an owner
+  question is returned as a blocker for the parent to ask, never parked inside
+  the child;
+- keeps the requested read/write scope in the provider policy and bounded
+  contract without maintaining a second route-by-route tool allowlist;
 - survives a platform restart: rerun the same blocking command to reattach, or
   let boot reconciliation wake the parent of a background run;
-- leaves spending limits to the owner's provider/account configuration;
+- does not impose an ordinary Möbius spending budget; provider/account quotas
+  remain observable runtime state rather than a hidden local ceiling;
 - automatically reseeds a lost read-only provider session from the durable
   child history, but stops a lost write session for parent review rather than
   risking duplicate edits;
