@@ -273,7 +273,10 @@ def run(args: argparse.Namespace) -> int:
     "model": model,
     "effort": effort,
     "scope": args.scope,
-    "cwd": args.cwd or os.getcwd(),
+    # Omission means the platform's stable /data default. Materializing the
+    # caller shell here made an otherwise identical post-restart attachment
+    # conflict whenever the resumed parent happened to start elsewhere.
+    "cwd": args.cwd,
     "notify_parent_on_complete": background,
   })
   if not isinstance(delegation, dict) or not delegation.get("id"):
@@ -369,6 +372,30 @@ def status(args: argparse.Namespace) -> int:
   return 0
 
 
+def retry(args: argparse.Namespace) -> int:
+  """Retry one exact quota-paused physical run after usage is restored."""
+  current = _api(f"/api/delegations/{args.delegation_id}")
+  if not isinstance(current, dict):
+    raise SubagentError("Delegation not found.")
+  if current.get("status") != "paused":
+    raise SubagentError(
+      "Only a quota-paused delegation can be retried. Ordinary attachment "
+      "is read-only and will continue polling without spending another turn."
+    )
+  run_token = str(current.get("physical_run_id") or "").strip()
+  if not run_token:
+    raise SubagentError("The paused delegation has no physical run identity.")
+  value = _api(
+    f"/api/delegations/{args.delegation_id}/retry",
+    method="POST",
+    body={"run_token": run_token},
+  )
+  if not isinstance(value, dict):
+    raise SubagentError("Möbius did not return the retried delegation.")
+  print(json.dumps(value, indent=2))
+  return 0
+
+
 def cancel(args: argparse.Namespace) -> int:
   value = _api(
     f"/api/delegations/{args.delegation_id}/cancel", method="POST", body={}
@@ -411,6 +438,11 @@ def build_parser() -> argparse.ArgumentParser:
   status_parser = sub.add_parser("status", help="Show one delegated task.")
   status_parser.add_argument("delegation_id")
   status_parser.add_argument("--history", action="store_true")
+  retry_parser = sub.add_parser(
+    "retry",
+    help="Try one quota-paused task after credits or a usage reset.",
+  )
+  retry_parser.add_argument("delegation_id")
   cancel_parser = sub.add_parser("cancel", help="Cancel one delegated task.")
   cancel_parser.add_argument("delegation_id")
   return parser
@@ -428,6 +460,8 @@ def main() -> int:
       return list_work(args)
     if args.command == "status":
       return status(args)
+    if args.command == "retry":
+      return retry(args)
     return cancel(args)
   except (OSError, ValueError, SubagentError) as exc:
     print(f"subagents: {exc}", file=sys.stderr)
