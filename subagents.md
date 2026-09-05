@@ -73,8 +73,13 @@ python <source_dir>/subagents.py run \
   [--effort <level>] \
   [--explicit] \
   [--background] \
+  [--cwd /data/path] \
   (--prompt-file <path> | --prompt '<bounded contract>')
 ```
+
+Omitting `--cwd` uses the stable `/data` default. Pass it explicitly when the
+task truly depends on another working directory; that explicit path remains
+part of the task's immutable identity.
 
 Without `--background`, the helper waits and prints the result in this turn.
 With it, the helper returns after submission and Möbius wakes this chat when the
@@ -144,8 +149,16 @@ controls are available from the helper when terminal output is more useful:
 ```bash
 python <source_dir>/subagents.py list --limit 12
 python <source_dir>/subagents.py status <delegation-id> [--history]
+python <source_dir>/subagents.py retry <delegation-id>
 python <source_dir>/subagents.py cancel <delegation-id>
 ```
+
+Ordinary `run` reattachment and `status` are observational: neither spends a
+provider retry. If the child is quota-paused and the owner has since bought
+credits or manually reset usage, use `retry` once. It names the paused physical
+run exactly, so a replay cannot retry a newer limit park by accident. Otherwise
+leave the task parked; Möbius resumes it automatically at the provider's
+advertised reset.
 
 Use cancellation only when the task is no longer wanted or is clearly running
 away; inspecting status is read-only. The complete child history is retained

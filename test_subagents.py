@@ -176,6 +176,25 @@ class SubagentsContractTests(unittest.TestCase):
 
     self.assertEqual(calls[0][2]["prompt"], "Review the bounded child contract.")
 
+  def test_omitted_cwd_stays_stable_across_shell_reattachment(self):
+    args = run_args("/does/not/exist", name="stable-default-cwd")
+    args.prompt_file = None
+    args.prompt = "Review from the stable data root."
+    args.cwd = None
+    calls = []
+
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      return {"id": "delegation-cwd", "status": "completed", "result": "Done."}
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", side_effect=fake_api), \
+         patch.object(subagents, "_record"):
+      self.assertEqual(subagents.run(args), 0)
+
+    self.assertIsNone(calls[0][2]["cwd"])
+
   def test_completed_truncated_result_names_the_durable_transcript(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:
       handle.write("Audit the large result path.")
@@ -232,6 +251,49 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertIs(calls[0][2]["notify_parent_on_complete"], True)
     self.assertIn("delegation-bg", stdout.getvalue())
     self.assertIn("auto-woken", stdout.getvalue())
+
+  def test_retry_names_the_exact_paused_physical_run(self):
+    args = argparse.Namespace(delegation_id="delegation-paused")
+    calls = []
+
+    def fake_api(path, method="GET", body=None):
+      calls.append((path, method, body))
+      if method == "GET":
+        return {
+          "id": "delegation-paused",
+          "status": "paused",
+          "physical_run_id": "physical-park",
+        }
+      return {
+        "id": "delegation-paused",
+        "status": "resuming",
+        "physical_run_id": "physical-park",
+        "retry_started": True,
+      }
+
+    stdout = io.StringIO()
+    with patch.object(subagents, "_api", side_effect=fake_api), \
+         redirect_stdout(stdout):
+      self.assertEqual(subagents.retry(args), 0)
+
+    self.assertEqual(calls, [
+      ("/api/delegations/delegation-paused", "GET", None),
+      (
+        "/api/delegations/delegation-paused/retry",
+        "POST", {"run_token": "physical-park"},
+      ),
+    ])
+    self.assertIn('"retry_started": true', stdout.getvalue())
+
+  def test_retry_rejects_observational_reattachment_to_live_work(self):
+    args = argparse.Namespace(delegation_id="delegation-running")
+    with patch.object(subagents, "_api", return_value={
+      "id": "delegation-running",
+      "status": "running",
+      "physical_run_id": "physical-live",
+    }):
+      with self.assertRaisesRegex(subagents.SubagentError, "quota-paused"):
+        subagents.retry(args)
 
 if __name__ == "__main__":
   unittest.main()
