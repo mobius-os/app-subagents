@@ -223,6 +223,26 @@ function fallbackModels(provider) {
   return catalog.providers[provider]?.models || []
 }
 
+const RETIRED_MODEL_IDS = Object.freeze({
+  'claude-opus-4-5-20251001': 'claude-opus-4-5-20251101',
+  'claude-sonnet-4-5-20251001': 'claude-sonnet-4-5-20250929',
+  'claude-opus-4-6-20251015': 'claude-opus-4-6',
+  'claude-opus-4-7-20251215': 'claude-opus-4-7',
+  'claude-sonnet-4-7-20251215': 'claude-sonnet-4-6',
+})
+
+function storedModelId(value) {
+  return RETIRED_MODEL_IDS[value] || value || null
+}
+
+function hasRetiredModel(value) {
+  if (!value || typeof value !== 'object') return false
+  if (value.providers && typeof value.providers === 'object') {
+    return PROVIDER_IDS.some((id) => RETIRED_MODEL_IDS[value.providers[id]?.default_model])
+  }
+  return Boolean(RETIRED_MODEL_IDS[value.default])
+}
+
 function normalizeConfig(value) {
   if (value?.providers && typeof value.providers === 'object') {
     return {
@@ -231,7 +251,7 @@ function normalizeConfig(value) {
         const row = value.providers[id] || {}
         return [id, {
           enabled: row.enabled === true,
-          default_model: row.default_model || null,
+          default_model: storedModelId(row.default_model),
           default_effort: row.default_effort || null,
         }]
       })),
@@ -244,7 +264,7 @@ function normalizeConfig(value) {
       claude: { enabled: false, default_model: null, default_effort: null },
       codex: {
         enabled: legacyPresent ? value.enabled !== false : false,
-        default_model: value?.default || catalog.providers.codex.default_model,
+        default_model: storedModelId(value?.default) || catalog.providers.codex.default_model,
         default_effort: null,
       },
     },
@@ -586,7 +606,7 @@ export default function Subagents({ appId, token }) {
       unsubConfig = store.subscribe(CONFIG_KEY, async (value) => {
         const next = normalizeConfig(value || {})
         setConfig(next)
-        if (!migrationSaved.current && value && !value.providers) {
+        if (!migrationSaved.current && value && (!value.providers || hasRetiredModel(value))) {
           migrationSaved.current = true
           try { await store.set(CONFIG_KEY, next) } catch (error) {
             window.mobius?.signal?.('error', { message: error.message, source: 'config-migration' })
