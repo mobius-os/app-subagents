@@ -70,6 +70,47 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertFalse(config["providers"]["claude"]["enabled"])
     self.assertFalse(config["providers"]["codex"]["enabled"])
 
+  def test_config_migrates_only_retired_model_ids_idempotently(self):
+    for retired, current in subagents.RETIRED_MODEL_IDS.items():
+      source = {"providers": {
+        "claude": {"enabled": True, "default_model": retired},
+        "codex": {"enabled": True, "default_model": "gpt-5.5"},
+      }}
+      migrated = subagents._normalize_config(source)
+      self.assertEqual(migrated["providers"]["claude"]["default_model"], current)
+      self.assertEqual(migrated["providers"]["codex"]["default_model"], "gpt-5.5")
+      self.assertFalse(subagents._has_retired_model(migrated))
+      self.assertEqual(subagents._normalize_config(migrated), migrated)
+    unknown = {"providers": {"claude": {"default_model": "future-model"}}}
+    self.assertEqual(
+      subagents._normalize_config(unknown)["providers"]["claude"]["default_model"],
+      "future-model",
+    )
+
+  def test_snapshot_persists_migration_before_model_resolution(self):
+    stored = {"providers": {
+      "claude": {"enabled": True, "default_model": "claude-opus-4-6-20251015"},
+      "codex": {"enabled": False},
+    }}
+    def storage_get(_app_id, name):
+      return stored if name == "config.json" else {}
+    with patch.object(subagents, "_app_id", return_value=102), \
+         patch.object(subagents, "_storage_get", side_effect=storage_get), \
+         patch.object(subagents, "_storage_put") as put, \
+         patch.object(subagents, "_connections", return_value={}), \
+         patch.object(subagents, "_models", return_value={}):
+      result = subagents.snapshot()
+    self.assertEqual(result["providers"]["claude"]["default_model"], "claude-opus-4-6")
+    put.assert_called_once()
+    self.assertEqual(put.call_args.args[2]["providers"]["claude"]["default_model"], "claude-opus-4-6")
+
+  def test_ui_migrates_current_and_legacy_config_shapes(self):
+    source = Path(__file__).with_name("index.jsx").read_text(encoding="utf-8")
+    for retired, current in subagents.RETIRED_MODEL_IDS.items():
+      self.assertIn(f"'{retired}': '{current}'", source)
+    self.assertIn("hasRetiredModel(value)", source)
+    self.assertIn("storedModelId(row.default_model)", source)
+
   def test_delegated_snapshot_uses_the_confined_capability_route(self):
     payload = {
       "app_id": 102,

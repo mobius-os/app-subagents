@@ -21,6 +21,13 @@ from urllib.request import Request, urlopen
 APP_DIR = Path(__file__).resolve().parent
 CATALOG = json.loads((APP_DIR / "models.json").read_text(encoding="utf-8"))
 PROVIDERS = ("claude", "codex")
+RETIRED_MODEL_IDS = {
+  "claude-opus-4-5-20251001": "claude-opus-4-5-20251101",
+  "claude-sonnet-4-5-20251001": "claude-sonnet-4-5-20250929",
+  "claude-opus-4-6-20251015": "claude-opus-4-6",
+  "claude-opus-4-7-20251215": "claude-opus-4-7",
+  "claude-sonnet-4-7-20251215": "claude-sonnet-4-6",
+}
 
 
 class SubagentError(RuntimeError):
@@ -77,6 +84,27 @@ def _storage_put(app_id: int, name: str, value: dict) -> None:
   _api(f"/api/storage/apps/{app_id}/{name}", method="PUT", body=value)
 
 
+def _model_id(value: object) -> object:
+  return RETIRED_MODEL_IDS.get(value, value) if isinstance(value, str) else value
+
+
+def _has_retired_model(value: object) -> bool:
+  if not isinstance(value, dict):
+    return False
+  providers = value.get("providers")
+  if isinstance(providers, dict):
+    return any(
+      isinstance(providers.get(provider), dict)
+      and isinstance(providers[provider].get("default_model"), str)
+      and providers[provider].get("default_model") in RETIRED_MODEL_IDS
+      for provider in PROVIDERS
+    )
+  return (
+    isinstance(value.get("default"), str)
+    and value.get("default") in RETIRED_MODEL_IDS
+  )
+
+
 def _normalize_config(value: dict) -> dict:
   providers = value.get("providers")
   if isinstance(providers, dict):
@@ -86,7 +114,7 @@ def _normalize_config(value: dict) -> dict:
       row = row if isinstance(row, dict) else {}
       normalized["providers"][provider] = {
         "enabled": row.get("enabled") is True,
-        "default_model": row.get("default_model"),
+        "default_model": _model_id(row.get("default_model")),
         "default_effort": row.get("default_effort"),
       }
     return normalized
@@ -107,7 +135,7 @@ def _normalize_config(value: dict) -> dict:
           value.get("enabled") is not False if legacy_present else False
         ),
         "default_model": (
-          value.get("default")
+          _model_id(value.get("default"))
           or CATALOG["providers"]["codex"]["default_model"]
         ),
         "default_effort": None,
@@ -149,7 +177,10 @@ def snapshot() -> dict:
     live_models = capabilities.get("models") or {}
   else:
     app_id = _app_id()
-    config = _normalize_config(_storage_get(app_id, "config.json"))
+    stored_config = _storage_get(app_id, "config.json")
+    config = _normalize_config(stored_config)
+    if _has_retired_model(stored_config):
+      _storage_put(app_id, "config.json", config)
     runtime = _storage_get(app_id, "status.json").get("providers", {})
     connections = _connections()
     live_models = _models()
