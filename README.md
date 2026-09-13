@@ -17,6 +17,9 @@ One optional control surface for delegating bounded work to **Claude** and
 - **Durable child tasks** are hidden app-owned chats supervised by Möbius's
   ordinary SDK/session/restart machinery. A stable task name attaches retries
   and post-restart parents to the same child rather than spending twice.
+- **Capacity-aware fan-out** proves a durable provider with one completed
+  canary before starting a wider batch; merely entering a running state no
+  longer paints the provider as ready.
 - **Conservative recovery** may reseed lost read-only sessions from retained
   child history, while lost write sessions stop for review. Möbius records
   provider usage and quota outcomes but does not impose an ordinary local

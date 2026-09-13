@@ -254,7 +254,7 @@ def _record(app_id: int, provider: str, state: str, detail: str, model: str | No
 def _classify_failure(text: str) -> str:
   lowered = text.lower()
   if any(term in lowered for term in (
-    "monthly spend limit", "usage limit", "quota", "credit balance",
+    "monthly spend limit", "usage limit", "session limit", "quota", "credit balance",
     "rate limit", "too many requests",
   )):
     return "quota_limited"
@@ -264,6 +264,37 @@ def _classify_failure(text: str) -> str:
   )):
     return "auth_error"
   return "temporarily_unavailable"
+
+
+def _usage_total(delegation: dict) -> int | None:
+  usage = delegation.get("usage")
+  if not isinstance(usage, dict):
+    return None
+  value = usage.get("total_tokens")
+  return int(value) if isinstance(value, (int, float)) else None
+
+
+def _paused_result(
+  snap: dict, provider: str, model: str | None, delegation: dict,
+) -> int:
+  detail = str(delegation.get("result") or "").strip()
+  detail = detail or "The delegated provider paused this task."
+  state = _classify_failure(detail)
+  _record(snap["app_id"], provider, state, detail, model)
+  if state == "quota_limited" and _usage_total(delegation) == 0:
+    print(
+      detail + "\nNo delegated work was performed. This task is still parked "
+      "for a later retry; cancel delegation " + str(delegation.get("id")) +
+      " before choosing another eligible provider, or continue locally.",
+      file=sys.stderr,
+    )
+    return 1
+  print(
+    detail + "\nInspect this durable task before reassigning it; it may have "
+    "performed work before pausing.",
+    file=sys.stderr,
+  )
+  return 3
 
 
 def run(args: argparse.Namespace) -> int:
@@ -315,20 +346,67 @@ def run(args: argparse.Namespace) -> int:
 
   delegation_id = delegation["id"]
   if background:
-    _record(
-      snap["app_id"], args.provider, "available",
-      f"Delegation {delegation_id} submitted in background.", model,
-    )
+    # Quota rejection happens just after the durable child is created. Observe
+    # that short admission window so the parent can safely choose another
+    # provider instead of handing ownership to a zero-work paused child.
+    completed_during_admission = False
+    observation_warning = ""
+    deadline = time.monotonic() + args.admission_timeout
+    while time.monotonic() < deadline:
+      time.sleep(min(args.poll_interval, max(0, deadline - time.monotonic())))
+      try:
+        next_value = _api(f"/api/delegations/{delegation_id}")
+      except SubagentError as exc:
+        # Submission already returned a durable identity. Losing a later
+        # observation must not make the parent treat that accepted child as a
+        # failed start and create duplicate work; the completion wake still
+        # owns delivery.
+        observation_warning = str(exc)
+        break
+      if isinstance(next_value, dict):
+        delegation = next_value
+      status = str(delegation.get("status") or "")
+      if status == "completed":
+        _record(
+          snap["app_id"], args.provider, "available",
+          f"Delegation {delegation_id} completed.", model,
+        )
+        completed_during_admission = True
+        break
+      if status == "paused":
+        return _paused_result(snap, args.provider, model, delegation)
+      if status in {
+        "failed", "needs_review", "stopped", "cancelled", "interrupted",
+      }:
+        detail = str(delegation.get("result") or "").strip()
+        detail = detail or "Delegation failed during provider admission."
+        _record(
+          snap["app_id"], args.provider, _classify_failure(detail), detail, model,
+        )
+        print(detail, file=sys.stderr)
+        return 3 if status == "needs_review" else 1
     print(json.dumps({
       "delegation_id": delegation_id,
       "task_key": args.name,
       "child_chat_id": delegation.get("child_chat_id"),
       "status": str(delegation.get("status") or "starting"),
+      "provider_execution_admitted": delegation.get(
+        "provider_execution_admitted"
+      ),
       "background": True,
       "note": (
-        "Submitted. This chat will be auto-woken with the result when the "
-        "task finishes — do not wait for it in this turn. Reuse this --name to "
-        "attach and poll early if you need it sooner."
+        "Completed during admission. Möbius will deliver the durable result "
+        "to this chat."
+        if completed_during_admission else
+        "Submitted. Admission status could not be observed after the durable "
+        "task was accepted, so do not create a replacement; Möbius will still "
+        "wake this chat with the result. Observation error: " +
+        observation_warning
+        if observation_warning else
+        "Submitted, but a running background task is not proof that provider "
+        "capacity is available. This chat will be auto-woken with the result "
+        "when the task finishes — do not wait for it in this turn. Reuse this "
+        "--name to attach and poll early if you need it sooner."
       ),
     }, indent=2))
     return 0
@@ -352,6 +430,8 @@ def run(args: argparse.Namespace) -> int:
           file=sys.stderr,
         )
       return 0
+    if status == "paused":
+      return _paused_result(snap, args.provider, model, delegation)
     if status in {
       "failed", "needs_review", "stopped", "cancelled", "interrupted",
     }:
@@ -464,6 +544,10 @@ def build_parser() -> argparse.ArgumentParser:
   )
   run_parser.add_argument("--timeout", type=int, default=1800)
   run_parser.add_argument("--poll-interval", type=float, default=1.5)
+  run_parser.add_argument(
+    "--admission-timeout", type=float, default=12,
+    help="Seconds to observe a background child for immediate quota rejection.",
+  )
   list_parser = sub.add_parser("list", help="List durable delegated work.")
   list_parser.add_argument("--limit", type=int, default=100)
   status_parser = sub.add_parser("status", help="Show one delegated task.")

@@ -49,12 +49,21 @@ partner explicitly asks for that provider and pass `--explicit`.
 
 - If the partner names Claude or Codex, use that provider or surface why it
   cannot run. Never silently swap providers or models.
-- If neither is named, choose only among connected + enabled providers. Pick
-  the one that best fits the bounded outcome, or keep the work local when a
-  subagent would not materially help.
+- If neither is named, choose only among connected + enabled providers whose
+  latest runtime state is not `quota_limited`. Pick the one that best fits the
+  bounded outcome, or keep the work local when a subagent would not materially
+  help.
 - If no eligible provider exists, continue without delegation and say why.
 - Resolve natural-language model names against the snapshot's model IDs and
   aliases. An unmatched model is a question or an error, never an invented ID.
+
+Before starting two or more **durable** children on one provider, run one
+representative child without `--background` and wait for its terminal result.
+Only fan out after that canary succeeds. A child that merely reached `running`
+has not proved capacity: quota rejection can arrive later. If the canary is a
+zero-work quota failure, do not start the rest. This is a capability check, not
+a fixed fleet-size limit, and it does not apply to cheap in-process agents that
+finish inside the current turn.
 
 Before the call, state the provider, model/default, and bounded purpose in one
 short sentence. This makes cross-provider compute explicit without adding an
@@ -82,8 +91,12 @@ task truly depends on another working directory; that explicit path remains
 part of the task's immutable identity.
 
 Without `--background`, the helper waits and prints the result in this turn.
-With it, the helper returns after submission and Möbius wakes this chat when the
-child finishes. Reuse the same `--name` to attach and poll it early.
+With it, the helper briefly observes for an early provider rejection, then
+returns and Möbius wakes this chat when the child finishes. A still-running
+background child does not overwrite the provider's last terminal runtime state
+or count as capacity proof. If the provider rejects a zero-work child for quota
+inside that window, the helper returns the failure immediately instead of
+leaving the parent waiting. Reuse the same `--name` to attach and poll it early.
 
 The helper:
 
@@ -112,7 +125,16 @@ The helper:
   risking duplicate edits;
 - records success, quota exhaustion, auth failure, or temporary failure in the
   app's runtime status without hiding the provider's exact error;
-- never retries through another provider or model.
+- leaves provider choice with the parent rather than retrying blindly.
+
+If an unspecified provider rejects the child for quota **before doing any
+work**, cancel that exact parked delegation first, refresh the snapshot, then
+try one other connected + enabled provider whose runtime is eligible. Use a
+provider-suffixed task name so the durable identity remains honest. If none is
+eligible, continue locally. Never silently switch when the partner named a
+provider. If a child used tokens or may have written before pausing, inspect it
+before cancelling or reassigning; avoiding duplicate edits matters more than
+automatic failover.
 
 Do not invoke `claude -p` or `codex exec` directly when this installed app is
 available; the helper is the recursion, configuration, durable identity, and

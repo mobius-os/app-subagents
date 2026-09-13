@@ -21,6 +21,7 @@ def run_args(prompt_path: str, *, name: str, background: bool = False):
     provider="codex", name=name, scope="read", model=None,
     effort=None, explicit=False, prompt_file=prompt_path, prompt=None, cwd="/data",
     background=background, timeout=10, poll_interval=0.001,
+    admission_timeout=0.003,
   )
 
 
@@ -262,7 +263,7 @@ class SubagentsContractTests(unittest.TestCase):
     self.assertIn("child-large", stderr.getvalue())
     self.assertIn("complete transcript", stderr.getvalue())
 
-  def test_background_run_submits_with_wake_and_returns_without_polling(self):
+  def test_background_running_state_does_not_claim_provider_capacity(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:
       handle.write("Audit the restart path in the background.")
       prompt_path = handle.name
@@ -271,27 +272,142 @@ class SubagentsContractTests(unittest.TestCase):
 
     def fake_api(path, method="GET", body=None):
       calls.append((path, method, body))
-      # Only the submit should ever be called in background mode.
       return {"id": "delegation-bg", "child_chat_id": "child-bg",
-              "status": "starting"}
+              "status": "running"}
 
     stdout = io.StringIO()
     try:
       with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
            patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
            patch.object(subagents, "_api", side_effect=fake_api), \
-           patch.object(subagents, "_record"), \
+           patch.object(subagents, "_record") as record, \
            redirect_stdout(stdout):
         self.assertEqual(subagents.run(args), 0)
     finally:
       Path(prompt_path).unlink(missing_ok=True)
 
-    # Exactly one API call (the submit) — no polling loop in background mode.
-    self.assertEqual(len(calls), 1)
+    self.assertGreaterEqual(len(calls), 2)
     self.assertEqual(calls[0][0], "/api/delegations")
     self.assertIs(calls[0][2]["notify_parent_on_complete"], True)
     self.assertIn("delegation-bg", stdout.getvalue())
     self.assertIn("auto-woken", stdout.getvalue())
+    self.assertIn("not proof", stdout.getvalue())
+    record.assert_not_called()
+
+  def test_background_completion_is_real_capacity_evidence(self):
+    args = run_args("/does/not/exist", name="bg-complete", background=True)
+    args.prompt_file = None
+    args.prompt = "Review the bounded contract."
+    completed = {
+      "id": "delegation-complete", "status": "completed",
+      "result": "Done.", "provider_execution_admitted": True,
+    }
+    stdout = io.StringIO()
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", side_effect=[
+           {"id": "delegation-complete", "status": "starting"}, completed,
+         ]), \
+         patch.object(subagents, "_record") as record, \
+         redirect_stdout(stdout):
+      self.assertEqual(subagents.run(args), 0)
+
+    record.assert_called_once_with(
+      102, "codex", "available",
+      "Delegation delegation-complete completed.", "gpt-5.6-sol",
+    )
+    self.assertIn("Completed during admission", stdout.getvalue())
+    self.assertNotIn("when the task finishes", stdout.getvalue())
+
+  def test_background_observation_failure_preserves_durable_submission(self):
+    args = run_args("/does/not/exist", name="bg-observation", background=True)
+    args.prompt_file = None
+    args.prompt = "Review the bounded contract."
+    stdout = io.StringIO()
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", side_effect=[
+           {
+             "id": "delegation-observation", "status": "starting",
+             "child_chat_id": "child-observation",
+           },
+           subagents.SubagentError("temporary status read failed"),
+         ]), \
+         patch.object(subagents, "_record") as record, \
+         redirect_stdout(stdout):
+      self.assertEqual(subagents.run(args), 0)
+
+    output = stdout.getvalue()
+    self.assertIn("delegation-observation", output)
+    self.assertIn("do not create a replacement", output)
+    self.assertIn("temporary status read failed", output)
+    record.assert_not_called()
+
+  def test_background_zero_work_quota_pause_is_actionable(self):
+    args = run_args("/does/not/exist", name="bg-quota", background=True)
+    args.prompt_file = None
+    args.prompt = "Review the bounded contract."
+    paused = {
+      "id": "delegation-quota", "status": "paused",
+      "result": "You've hit your session limit",
+      "usage": {"total_tokens": 0},
+    }
+    stderr = io.StringIO()
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", side_effect=[
+           {"id": "delegation-quota", "status": "starting"}, paused,
+         ]), \
+         patch.object(subagents, "_record") as record, \
+         redirect_stderr(stderr):
+      self.assertEqual(subagents.run(args), 1)
+
+    record.assert_called_once_with(
+      102, "codex", "quota_limited",
+      "You've hit your session limit", "gpt-5.6-sol",
+    )
+    self.assertIn("No delegated work was performed", stderr.getvalue())
+    self.assertIn("cancel delegation delegation-quota", stderr.getvalue())
+    self.assertIn("another eligible provider", stderr.getvalue())
+
+  def test_blocking_quota_pause_does_not_wait_until_timeout(self):
+    args = run_args("/does/not/exist", name="blocking-quota")
+    args.prompt_file = None
+    args.prompt = "Review the bounded contract."
+    paused = {
+      "id": "delegation-quota", "status": "paused",
+      "result": "Quota exceeded", "usage": {"total_tokens": 0},
+    }
+    stderr = io.StringIO()
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", return_value=paused), \
+         patch.object(subagents, "_record"), redirect_stderr(stderr):
+      self.assertEqual(subagents.run(args), 1)
+
+    self.assertIn("No delegated work was performed", stderr.getvalue())
+
+  def test_pause_after_work_requires_review_before_reassignment(self):
+    args = run_args("/does/not/exist", name="partial-quota")
+    args.prompt_file = None
+    args.prompt = "Review the bounded contract."
+    paused = {
+      "id": "delegation-partial", "status": "paused",
+      "result": "Quota exceeded", "usage": {"total_tokens": 42},
+    }
+    stderr = io.StringIO()
+
+    with patch.dict(os.environ, {"CHAT_ID": "parent-chat"}), \
+         patch.object(subagents, "snapshot", return_value=connected_snapshot()), \
+         patch.object(subagents, "_api", return_value=paused), \
+         patch.object(subagents, "_record"), redirect_stderr(stderr):
+      self.assertEqual(subagents.run(args), 3)
+
+    self.assertIn("before reassigning", stderr.getvalue())
 
   def test_retry_names_the_exact_paused_physical_run(self):
     args = argparse.Namespace(delegation_id="delegation-paused")
