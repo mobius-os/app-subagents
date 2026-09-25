@@ -7,8 +7,7 @@ description: Read before delegating a bounded task to Claude or Codex. This capa
 
 The **Subagents** app is the source of truth. Its provider-neutral helper reads
 the current app configuration and Möbius's passive provider connection status
-at the moment of delegation; do not infer availability from a binary alone and
-do not use the old Codex Claude-Code plugin.
+at the moment of delegation; do not infer availability from a binary alone.
 
 ## 0. Choose the cheapest honest execution path
 
@@ -139,7 +138,7 @@ automatic failover.
 Do not invoke `claude -p` or `codex exec` directly when this installed app is
 available; the helper is the recursion, configuration, durable identity, and
 status boundary. Choose a short semantic task name (for example
-`audit-restart-recovery`) and reuse it only for that exact prompt + policy.
+`compare-flight-options`) and reuse it only for that exact prompt + policy.
 Delegated children normally use `--prompt` because confined read mode does not
 create temporary files; top-level agents should keep using a prompt file for
 longer contracts.
@@ -159,11 +158,11 @@ Point to real files instead of pasting large context. A delegated result is
 evidence or a candidate change, not a substitute for your own judgment. Review
 its output, verify any edits, and tell the partner which provider did what.
 
-Bound reviews by the decision they must change and the smallest authoritative
-source set that can answer it. Do not hand one child several independent audit
-themes merely because it can inspect a large tree; split genuinely independent
-questions or keep the synthesis local. High effort is not a substitute for a
-clear stopping condition.
+Bound research or review tasks over many sources by the decision they must
+change and the smallest authoritative set of sources that can answer it. Do not
+hand one child several independent questions merely because it can read a lot;
+split genuinely independent questions or keep the synthesis local. High effort
+is not a substitute for a clear stopping condition.
 
 The app shows recent runs, duration, usage, results, and live status. The same
 controls are available from the helper when terminal output is more useful:
