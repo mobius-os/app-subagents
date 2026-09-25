@@ -1,191 +1,84 @@
 ---
 name: subagents
-description: Read before delegating a bounded task to Claude or Codex. This capability is owned by the installed Subagents app: honor each provider's live connection and enable state, use its configured model/effort defaults, run through the app's guarded helper, preserve parent tool access, and report which provider did what.
+description: Read before delegating to a helper agent. Helpers start with the Möbius spawn_agent tool on any connected provider or model; the Subagents app owns provider switches and model/effort defaults.
 ---
 
-# Delegating to a subagent
+# Delegating to helper agents
 
-The **Subagents** app is the source of truth. Its provider-neutral helper reads
-the current app configuration and Möbius's passive provider connection status
-at the moment of delegation; do not infer availability from a binary alone.
+Start helpers with the Möbius helper tools (`spawn_agent`, `message_agent`,
+`stop_agent`, `list_agents`). The providers' built-in helper tools are off.
+Every helper runs as a durable Möbius task: it survives the end of your turn
+and planned restarts, shows as a helper row in the chat, and shares a small
+per-chat helper process, so helpers are cheap.
 
-## 0. Choose the cheapest honest execution path
+## When to delegate
 
-Use your SDK's native in-process agents for bounded parallel work that finishes
-this turn. They share the current process, so launch them and wait in-turn.
+- Bounded work that gains from parallelism, from a different provider or model
+  (an independent review, a second opinion), or from isolation.
+- For parallel work, call `spawn_agent` several times in the same step.
+- Keep small sequential work local; delegation is not a substitute for thinking.
 
-This helper starts a separate durable agent process, hidden child chat, and
-session. Use it only when work must outlive the turn, needs that isolation, or
-should wake this chat after it finishes—not merely to parallelize ordinary work.
+## Start a helper: `spawn_agent`
 
-## 1. Read the live state
+- `name`: a short stable name such as `review-auth-flow`. Reusing it attaches
+  to the same helper instead of starting another.
+- `task`: a self-contained contract. The helper does not see this
+  conversation, so point to real files rather than pasting context:
 
-Find the installed app named `Subagents` and request the source path explicitly:
+  ```text
+  Goal: <specific outcome>
+  Where: <files, system, or evidence to inspect>
+  Constraints: <read-only or exact write scope; important boundaries>
+  Done when: <observable result and verification>
+  ```
 
-```bash
-python "$SCRIPTS_DIR/list_apps.py" --name Subagents --with-source-dir
-```
+- `access`: `read` forbids file changes; `write` allows edits within the scope
+  the task states.
+- `provider`, `model`, `effort`: omit them to use this chat's provider and the
+  Subagents app's defaults. When the partner names a provider or model, pass
+  it; never silently swap. A provider paused in the Subagents app is used only
+  when the partner explicitly asks for it (pass it explicitly).
 
-Use the `source_dir` from the matching row. Before choosing a provider, run:
+Before starting helpers, say in one short sentence which provider and model
+will do what.
 
-```bash
-python <source_dir>/subagents.py snapshot
-```
+## Results
 
-The snapshot distinguishes:
+Results arrive in this chat by themselves: during your turn if you are still
+working, otherwise by waking the chat after you end it. Never poll, sleep, or
+wait on them. Continue independent work, or end your turn.
 
-- `connected`: durable local credentials are usable;
-- `enabled`: the owner's independent app switch;
-- `runtime`: the outcome of the most recent real delegated call
-  (`available`, `quota_limited`, `auth_error`, `temporarily_unavailable`);
-- model and effort defaults for each provider.
+A helper's result is evidence or a candidate change, not a substitute for your
+judgment. Verify its edits and tell the partner which provider did what.
 
-Connection does **not** imply enabled. A quota/runtime failure does **not**
-erase a valid connection. If a provider is disabled, use it only when the
-partner explicitly asks for that provider and pass `--explicit`.
+## Follow up, stop, list
 
-## 2. Choose one provider honestly
+- `message_agent`: give a finished helper a follow-up task; it keeps its full
+  history. A helper that is still working cannot be messaged: wait for its
+  result or stop it.
+- `stop_agent`: stop a helper for good, including any command it is running.
+- `list_agents`: this chat's helpers and their status; pass one helper to read
+  its latest result again.
 
-- If the partner names Claude or Codex, use that provider or surface why it
-  cannot run. Never silently swap providers or models.
-- If neither is named, choose only among connected + enabled providers whose
-  latest runtime state is not `quota_limited`. Pick the one that best fits the
-  bounded outcome, or keep the work local when a subagent would not materially
-  help.
-- If no eligible provider exists, continue without delegation and say why.
-- Resolve natural-language model names against the snapshot's model IDs and
-  aliases. An unmatched model is a question or an error, never an invented ID.
+## Quota and failures
 
-Before starting two or more **durable** children on one provider, run one
-representative child without `--background` and wait for its terminal result.
-Only fan out after that canary succeeds. A child that merely reached `running`
-has not proved capacity: quota rejection can arrive later. If the canary is a
-zero-work quota failure, do not start the rest. This is a capability check, not
-a fixed fleet-size limit, and it does not apply to cheap in-process agents that
-finish inside the current turn.
+If a helper fails for quota before doing any work and the partner did not name
+a provider, start it again on another enabled provider with a
+provider-suffixed name. A quota-paused helper resumes by itself at the
+provider's reset; when the owner has bought credits or reset usage, retry it
+once with `python3 <Subagents source_dir>/subagents.py retry <helper_id>`.
 
-Before the call, state the provider, model/default, and bounded purpose in one
-short sentence. This makes cross-provider compute explicit without adding an
-approval ceremony to ordinary authorized work.
+## Older Möbius without these tools
 
-## 3. Run through the guarded helper
+If `spawn_agent` is not among your tools, this Möbius predates them: delegate
+with the app's guarded helper instead, `python3 <Subagents source_dir>/subagents.py
+run --provider claude|codex --name <key> --scope read|write --background
+--prompt-file <path>` (find `source_dir` with `python
+"$SCRIPTS_DIR/list_apps.py" --name Subagents --with-source-dir`). Its result
+wakes this chat the same way.
 
-Put the lean outcome-first prompt in a temporary file, then call:
+## Nesting
 
-```bash
-python <source_dir>/subagents.py run \
-  --provider claude|codex \
-  --name <stable-task-key> \
-  --scope read|write \
-  [--model <exact-id-or-alias>] \
-  [--effort <level>] \
-  [--explicit] \
-  [--background] \
-  [--cwd /data/path] \
-  (--prompt-file <path> | --prompt '<bounded contract>')
-```
-
-Omitting `--cwd` uses the stable `/data` default. Pass it explicitly when the
-task truly depends on another working directory; that explicit path remains
-part of the task's immutable identity.
-
-Without `--background`, the helper waits and prints the result in this turn.
-With it, the helper briefly observes for an early provider rejection, then
-returns and Möbius wakes this chat when the child finishes. A still-running
-background child does not overwrite the provider's last terminal runtime state
-or count as capacity proof. If the provider rejects a zero-work child for quota
-inside that window, the helper returns the failure immediately instead of
-leaving the parent waiting. Reuse the same `--name` to attach and poll it early.
-
-The helper:
-
-- checks current connection + enable state again immediately before spending;
-- applies the provider's configured model/effort defaults;
-- creates one hidden, app-owned child chat whose transcript and SDK session are
-  supervised by Möbius like any other durable turn;
-- treats `(parent logical run, --name)` as the immutable idempotency key, so
-  re-running the exact command after a retry or planned restart ATTACHES to the
-  existing child instead of spending twice;
-- permits useful local decomposition without an artificial recursion ceiling;
-  each child sees only its own bounded contract, inherits the parent agent's
-  usable local and connected tools, owns its immediate children,
-  and reports a concise result upward rather than leaking descendant history;
-  owner questions, Memory, and recent-chat context remain blocked; an owner
-  question is returned as a blocker for the parent to ask, never parked inside
-  the child;
-- keeps the requested read/write scope in the provider policy and bounded
-  contract without maintaining a second route-by-route tool allowlist;
-- survives a platform restart: rerun the same blocking command to reattach, or
-  let boot reconciliation wake the parent of a background run;
-- does not impose an ordinary Möbius spending budget; provider/account quotas
-  remain observable runtime state rather than a hidden local ceiling;
-- automatically reseeds a lost read-only provider session from the durable
-  child history, but stops a lost write session for parent review rather than
-  risking duplicate edits;
-- records success, quota exhaustion, auth failure, or temporary failure in the
-  app's runtime status without hiding the provider's exact error;
-- leaves provider choice with the parent rather than retrying blindly.
-
-If an unspecified provider rejects the child for quota **before doing any
-work**, cancel that exact parked delegation first, refresh the snapshot, then
-try one other connected + enabled provider whose runtime is eligible. Use a
-provider-suffixed task name so the durable identity remains honest. If none is
-eligible, continue locally. Never silently switch when the partner named a
-provider. If a child used tokens or may have written before pausing, inspect it
-before cancelling or reassigning; avoiding duplicate edits matters more than
-automatic failover.
-
-Do not invoke `claude -p` or `codex exec` directly when this installed app is
-available; the helper is the recursion, configuration, durable identity, and
-status boundary. Choose a short semantic task name (for example
-`compare-flight-options`) and reuse it only for that exact prompt + policy.
-Delegated children normally use `--prompt` because confined read mode does not
-create temporary files; top-level agents should keep using a prompt file for
-longer contracts.
-
-## 4. Shape the prompt and verify
-
-Use a compact contract:
-
-```text
-Goal: <specific outcome>
-Where: <files, system, or evidence to inspect>
-Constraints: <read-only or exact write scope; important boundaries>
-Done when: <observable result and verification>
-```
-
-Point to real files instead of pasting large context. A delegated result is
-evidence or a candidate change, not a substitute for your own judgment. Review
-its output, verify any edits, and tell the partner which provider did what.
-
-Bound research or review tasks over many sources by the decision they must
-change and the smallest authoritative set of sources that can answer it. Do not
-hand one child several independent questions merely because it can read a lot;
-split genuinely independent questions or keep the synthesis local. High effort
-is not a substitute for a clear stopping condition.
-
-The app shows recent runs, duration, usage, results, and live status. The same
-controls are available from the helper when terminal output is more useful:
-
-```bash
-python <source_dir>/subagents.py list --limit 12
-python <source_dir>/subagents.py status <delegation-id> [--history]
-python <source_dir>/subagents.py retry <delegation-id>
-python <source_dir>/subagents.py cancel <delegation-id>
-```
-
-Ordinary `run` reattachment and `status` are observational: neither spends a
-provider retry. If the child is quota-paused and the owner has since bought
-credits or manually reset usage, use `retry` once. It names the paused physical
-run exactly, so a replay cannot retry a newer limit park by accident. Otherwise
-leave the task parked; Möbius resumes it automatically at the provider's
-advertised reset.
-
-Use cancellation only when the task is no longer wanted or is clearly running
-away; inspecting status is read-only. The complete child history is retained
-for recovery and audit, while the parent should still receive a concise
-synthesis rather than a transcript dump.
-
-Do not end a turn while a blocking child runs. Use `--background` when the turn
-should end first; after a planned restart, rerun a blocking command with the
-same `--name` to attach to its resumed child.
+Helpers have the same tools and may start their own helpers for bounded
+decomposition; a read-only helper may start only read-only helpers. Each
+helper returns a concise result to its parent rather than its full history.
