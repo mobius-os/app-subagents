@@ -334,7 +334,7 @@ def run(args: argparse.Namespace) -> int:
     "provider": args.provider,
     "model": model,
     "effort": effort,
-    "scope": args.scope,
+    "scope": "write",
     # Omission means the platform's stable /data default. Materializing the
     # caller shell here made an otherwise identical post-restart attachment
     # conflict whenever the resumed parent happened to start elsewhere.
@@ -527,7 +527,6 @@ def build_parser() -> argparse.ArgumentParser:
     "--name", required=True,
     help="Stable task key used to attach after retries or a platform restart.",
   )
-  run_parser.add_argument("--scope", choices=("read", "write"), required=True)
   run_parser.add_argument("--model")
   run_parser.add_argument("--effort")
   run_parser.add_argument("--explicit", action="store_true")

@@ -18,7 +18,7 @@ SPEC.loader.exec_module(subagents)
 
 def run_args(prompt_path: str, *, name: str, background: bool = False):
   return argparse.Namespace(
-    provider="codex", name=name, scope="read", model=None,
+    provider="codex", name=name, model=None,
     effort=None, explicit=False, prompt_file=prompt_path, prompt=None, cwd="/data",
     background=background, timeout=10, poll_interval=0.001,
     admission_timeout=0.003,
@@ -195,6 +195,7 @@ class SubagentsContractTests(unittest.TestCase):
       Path(prompt_path).unlink(missing_ok=True)
 
     self.assertEqual(calls[0][0], "/api/delegations")
+    self.assertEqual(calls[0][2]["scope"], "write")
     self.assertEqual(calls[0][1], "POST")
     self.assertEqual(calls[0][2]["task_key"], "audit-restart")
     self.assertEqual(calls[0][2]["parent_chat_id"], "parent-chat")
