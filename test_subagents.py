@@ -95,7 +95,8 @@ class SubagentsContractTests(unittest.TestCase):
     }}
     def storage_get(_app_id, name):
       return stored if name == "config.json" else {}
-    with patch.object(subagents, "_app_id", return_value=102), \
+    with patch.dict(os.environ, {"MOBIUS_DELEGATION_ID": ""}), \
+         patch.object(subagents, "_app_id", return_value=102), \
          patch.object(subagents, "_storage_get", side_effect=storage_get), \
          patch.object(subagents, "_storage_put") as put, \
          patch.object(subagents, "_connections", return_value={}), \

@@ -10,23 +10,27 @@ One optional control surface for delegating bounded work to **Claude** and
   while adding Claude as opt-in.
 - **Provider-specific defaults** expose the live model registry and compatible
   effort levels without rewriting protected CLI configuration.
-- **One provider-neutral skill** reads the current settings at delegation time
-  and runs through `subagents.py`, which preserves direct-child ownership and
-  the task's bounded instructions without an artificial recursion ceiling,
-  records real runtime outcomes, and never silently swaps provider or model.
-- **Durable child tasks** are hidden app-owned chats supervised by Möbius's
-  ordinary SDK/session/restart machinery. A stable task name attaches retries
-  and post-restart parents to the same child rather than spending twice.
-- **Capacity-aware fan-out** proves a durable provider with one completed
+- **One provider-neutral skill** guides the platform's `spawn_agent` tool,
+  which preserves direct-child ownership and bounded task instructions without
+  an artificial recursion ceiling. The app's `subagents.py` helper remains a
+  fallback for older Möbius installations and never silently swaps provider
+  or model.
+- **Durable child tasks** are hidden platform chats supervised by Möbius's
+  ordinary SDK/session/restart machinery. New `spawn_agent` tasks need no app;
+  tasks started through this app's older helper retain their app attribution.
+  A stable task name attaches retries and post-restart parents to the same
+  child rather than spending twice.
+- **Capacity-aware CLI fallback** proves a durable provider with one completed
   canary before starting a wider batch; merely entering a running state no
   longer paints the provider as ready.
 - **Conservative recovery** stops lost helper sessions for review rather than
   replaying work that may already have changed state. Möbius records
   provider usage and quota outcomes but does not impose an ordinary local
   spending budget.
-- **Visible operations** show recent task status, duration, token usage, and
-  results in the app, with a deliberate two-step stop control for active work.
-  The helper exposes the same list, status/history, and cancellation boundary.
+- **Visible app-attributed operations** show recent task status, duration,
+  token usage, and results in the app, with a deliberate two-step stop control
+  for active work. Platform-owned helpers remain visible in their parent chats;
+  the app's list and CLI show tasks attributed to this app.
 
 ## Durable state
 
