@@ -347,7 +347,6 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
           <div className="sa-run-meta">
             <span>{PROVIDER_LABEL[row.provider] || row.provider}</span>
             {row.model && <span>{row.model}</span>}
-            <span>{row.scope === 'read' ? 'Read only' : 'Can edit'}</span>
             {duration && <span>{duration}</span>}
             {tokens && <span>{tokens} tokens</span>}
             {cost && <span>{cost}</span>}

@@ -28,12 +28,12 @@ per-chat helper process, so helpers are cheap.
   ```text
   Goal: <specific outcome>
   Where: <files, system, or evidence to inspect>
-  Constraints: <read-only or exact write scope; important boundaries>
+  Constraints: <what this task may and may not change; important boundaries>
   Done when: <observable result and verification>
   ```
 
-- `access`: `read` forbids file changes; `write` allows edits within the scope
-  the task states.
+- Helpers use one trusted mode. State read-only or editing constraints in the
+  task itself; owner approval, public-action, and secret safeguards still apply.
 - `provider`, `model`, `effort`: omit them to use this chat's provider and the
   Subagents app's defaults. When the partner names a provider or model, pass
   it; never silently swap. A provider paused in the Subagents app is used only
@@ -72,7 +72,7 @@ once with `python3 <Subagents source_dir>/subagents.py retry <helper_id>`.
 
 If `spawn_agent` is not among your tools, this Möbius predates them: delegate
 with the app's guarded helper instead, `python3 <Subagents source_dir>/subagents.py
-run --provider claude|codex --name <key> --scope read|write --background
+run --provider claude|codex --name <key> --background
 --prompt-file <path>` (find `source_dir` with `python
 "$SCRIPTS_DIR/list_apps.py" --name Subagents --with-source-dir`). Its result
 wakes this chat the same way.
@@ -80,5 +80,5 @@ wakes this chat the same way.
 ## Nesting
 
 Helpers have the same tools and may start their own helpers for bounded
-decomposition; a read-only helper may start only read-only helpers. Each
-helper returns a concise result to its parent rather than its full history.
+decomposition. Each helper returns a concise result to its parent rather than
+its full history.
