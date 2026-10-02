@@ -5,80 +5,36 @@ description: Read before delegating to a helper agent. Helpers start with the M�
 
 # Delegating to helper agents
 
-Start helpers with the Möbius helper tools (`spawn_agent`, `message_agent`,
-`stop_agent`, `list_agents`). The providers' built-in helper tools are off.
-Every helper runs as a durable Möbius task: it survives the end of your turn
-and planned restarts, shows as a helper row in the chat, and shares a small
-per-chat helper process, so helpers are cheap.
+Read the platform's `delegation` skill for the current helper workflow and
+use `spawn_agent`, `message_agent`, `stop_agent`, and `list_agents`.
+Subagents supplies provider switches and model/effort preferences; the platform
+owns task admission, recovery, results, and peer messaging.
 
-## When to delegate
+## Settings and scope
 
-- Bounded work that gains from parallelism, from a different provider or model
-  (an independent review, a second opinion), or from isolation.
-- For parallel work, call `spawn_agent` several times in the same step.
-- Keep small sequential work local; delegation is not a substitute for thinking.
+Omit provider/model/effort to use the calling turn's settings unless Subagents
+has an explicit preference. An explicitly selected different provider uses
+its own defaults, not an incompatible model inherited from the parent.
+Respect a paused provider; use it only when the partner explicitly requests it.
+Never switch providers or duplicate a quota-paused task merely to bypass a
+failure. Read the saved task's state and follow the platform recovery path.
 
-## Start a helper: `spawn_agent`
+Helpers use one trusted execution mode. `spawn_agent` has no `access` or
+`scope` argument. Put a read-only or exact editing constraint in the task;
+it is a work instruction, not a claimed platform-enforced permission.
+Helpers may delegate bounded work under the same task and owner safeguards.
 
-- `name`: a short stable name such as `review-auth-flow`. Reusing it attaches
-  to the same helper instead of starting another.
-- `task`: a self-contained contract. The helper does not see this
-  conversation, so point to real files rather than pasting context:
+## Follow-up versus coordination
 
-  ```text
-  Goal: <specific outcome>
-  Where: <files, system, or evidence to inspect>
-  Constraints: <what this task may and may not change; important boundaries>
-  Done when: <observable result and verification>
-  ```
+- `message_agent(helper, message)` starts a follow-up for a finished helper.
+  `helper` is its name or helper_id from `spawn_agent`/`list_agents`, not its
+  chat ID. A still-working helper is refused rather than interrupted.
+- For a decision-changing note to a working helper or another chat, use
+  `list_agent_peers`, then `send_agent_message(recipients, body)` with its peer
+  chat ID. Keep `next_turn` delivery unless the recipient must change its
+  current work; a peer note is not owner authority.
+- Results arrive automatically. Do not poll, sleep waiting for a result, or
+  use ordinary chat-message APIs for agent-to-agent communication.
 
-- Helpers use one trusted mode. State read-only or editing constraints in the
-  task itself; owner approval, public-action, and secret safeguards still apply.
-- `provider`, `model`, `effort`: omit them to use this chat's provider and the
-  Subagents app's defaults. When the partner names a provider or model, pass
-  it; never silently swap. A provider paused in the Subagents app is used only
-  when the partner explicitly asks for it (pass it explicitly).
-
-Before starting helpers, say in one short sentence which provider and model
-will do what.
-
-## Results
-
-Results arrive in this chat by themselves: during your turn if you are still
-working, otherwise by waking the chat after you end it. Never poll, sleep, or
-wait on them. Continue independent work, or end your turn.
-
-A helper's result is evidence or a candidate change, not a substitute for your
-judgment. Verify its edits and tell the partner which provider did what.
-
-## Follow up, stop, list
-
-- `message_agent`: give a finished helper a follow-up task; it keeps its full
-  history. A helper that is still working cannot be messaged: wait for its
-  result or stop it.
-- `stop_agent`: stop a helper for good, including any command it is running.
-- `list_agents`: this chat's helpers and their status; pass one helper to read
-  its latest result again.
-
-## Quota and failures
-
-If a helper fails for quota before doing any work and the partner did not name
-a provider, start it again on another enabled provider with a
-provider-suffixed name. A quota-paused helper resumes by itself at the
-provider's reset; when the owner has bought credits or reset usage, retry it
-once with `python3 <Subagents source_dir>/subagents.py retry <helper_id>`.
-
-## Older Möbius without these tools
-
-If `spawn_agent` is not among your tools, this Möbius predates them: delegate
-with the app's guarded helper instead, `python3 <Subagents source_dir>/subagents.py
-run --provider claude|codex --name <key> --background
---prompt-file <path>` (find `source_dir` with `python
-"$SCRIPTS_DIR/list_apps.py" --name Subagents --with-source-dir`). Its result
-wakes this chat the same way.
-
-## Nesting
-
-Helpers have the same tools and may start their own helpers for bounded
-decomposition. Each helper returns a concise result to its parent rather than
-its full history.
+If a helper tool is unavailable, follow the platform's documented resilience
+path rather than launching a provider CLI or an obsolete app execution lane.
