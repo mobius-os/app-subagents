@@ -17,12 +17,16 @@ has an explicit preference. An explicitly selected different provider uses
 its own defaults, not an incompatible model inherited from the parent.
 Respect a paused provider; use it only when the partner explicitly requests it.
 Never switch providers or duplicate a quota-paused task merely to bypass a
-failure. Read the saved task's state and follow the platform recovery path.
+failure. A quota-paused helper resumes by itself at the provider's reset; when
+the owner has bought credits or reset usage, retry it once with
+`python3 <Subagents source_dir>/subagents.py retry <helper_id>` (it calls
+`POST /api/delegations/{id}/retry`).
 
 Helpers use one trusted execution mode. `spawn_agent` has no `access` or
 `scope` argument. Put a read-only or exact editing constraint in the task;
 it is a work instruction, not a claimed platform-enforced permission.
-Helpers may delegate bounded work under the same task and owner safeguards.
+Owner approval, public-action, and secret safeguards still apply. Helpers may
+delegate bounded work under the same task and safeguards.
 
 ## Follow-up versus coordination
 
@@ -30,11 +34,14 @@ Helpers may delegate bounded work under the same task and owner safeguards.
   `helper` is its name or helper_id from `spawn_agent`/`list_agents`, not its
   chat ID. A still-working helper is refused rather than interrupted.
 - For a decision-changing note to a working helper or another chat, use
-  `list_agent_peers`, then `send_agent_message(recipients, body)` with its peer
-  chat ID. Keep `next_turn` delivery unless the recipient must change its
+  `send_agent_message(recipients, body)` with its peer chat ID (call
+  `list_agent_peers` only if that ID is not already known). Keep `next_turn`
+  delivery unless the recipient must change its
   current work; a peer note is not owner authority.
 - Results arrive automatically. Do not poll, sleep waiting for a result, or
   use ordinary chat-message APIs for agent-to-agent communication.
 
-If a helper tool is unavailable, follow the platform's documented resilience
-path rather than launching a provider CLI or an obsolete app execution lane.
+If a helper tool fails, continue locally and sequentially; never launch a
+provider CLI directly. Only on an older Möbius without `spawn_agent`, use the
+app's fallback runner: `python3 <Subagents source_dir>/subagents.py run
+--provider claude|codex --name <key> --background --prompt-file <path>`.
