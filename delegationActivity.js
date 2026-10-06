@@ -1,7 +1,15 @@
-export const ACTIVE_STATUSES = new Set(['starting', 'running', 'resuming', 'paused'])
+// Mirrors the platform's active delegation statuses: admitted (accepted) and
+// recovering (retrying) source work is unfinished just like a running run.
+export const ACTIVE_STATUSES = new Set(['accepted', 'retrying', 'starting', 'running', 'resuming', 'paused'])
 
 export function isActive(status) {
   return ACTIVE_STATUSES.has(status)
+}
+
+// Subagents may observe every chat's helpers, but it can only stop the ones it
+// started itself; other helpers stay with the chat or app that owns them.
+export function canStop(row, appId) {
+  return isActive(row.status) && row.app_id != null && Number(row.app_id) === Number(appId)
 }
 
 export function finishedSince(before, after) {
