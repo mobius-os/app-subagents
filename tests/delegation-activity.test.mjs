@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  RECENT_LIST_LIMIT,
+  activePollLimit,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
+  mergePolledWindow,
 } from '../delegationActivity.js'
 
 test('only the newest detail request may update the expanded task', () => {
@@ -57,4 +60,37 @@ test('compact header uses an inset hairline instead of an edge-to-edge border', 
   const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   assert.match(source, /\.sa-header-inner::after\s*\{[^}]*inset-inline:\s*16px/s)
   assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
+})
+
+test('active polling fetches only the window that reaches the oldest active run', () => {
+  const rows = Array.from({ length: 150 }, (_, i) => ({ id: `d${i}`, status: 'completed' }))
+  assert.equal(activePollLimit(rows), 20)
+  rows[4].status = 'running'
+  assert.equal(activePollLimit(rows), 25)
+  rows[140].status = 'paused'
+  assert.equal(activePollLimit(rows), 161)
+  rows[149].status = 'starting'
+  assert.equal(activePollLimit(rows.concat(rows)), RECENT_LIST_LIMIT)
+})
+
+test('a polled window updates its rows and keeps older rows without duplicates', () => {
+  const previous = [
+    { id: 'b', status: 'running' }, { id: 'a', status: 'completed' }, { id: 'old', status: 'failed' },
+  ]
+  const merged = mergePolledWindow(previous, [
+    { id: 'c', status: 'starting' }, { id: 'b', status: 'completed' },
+  ], 2)
+  assert.deepEqual(merged.map((row) => `${row.id}:${row.status}`), [
+    'c:starting', 'b:completed', 'a:completed', 'old:failed',
+  ])
+  const many = Array.from({ length: RECENT_LIST_LIMIT }, (_, i) => ({ id: `p${i}` }))
+  assert.equal(mergePolledWindow(many, [{ id: 'new' }], 1).length, RECENT_LIST_LIMIT)
+})
+
+test('a row that vanished inside the polled window is dropped', () => {
+  const previous = [{ id: 'c' }, { id: 'gone' }, { id: 'b' }, { id: 'a' }]
+  assert.deepEqual(mergePolledWindow(previous, [{ id: 'c' }, { id: 'b' }], 2).map((row) => row.id),
+    ['c', 'b', 'a'])
+  assert.deepEqual(mergePolledWindow(previous, [{ id: 'c' }], 5).map((row) => row.id), ['c'],
+    'a short window is the whole list')
 })

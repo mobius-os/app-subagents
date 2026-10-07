@@ -8,10 +8,13 @@ import {
 import catalog from './models.json'
 import {
   ACTIVE_STATUSES,
+  RECENT_LIST_LIMIT,
+  activePollLimit,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
+  mergePolledWindow,
 } from './delegationActivity.js'
 
 const CONFIG_KEY = 'config.json'
@@ -575,7 +578,7 @@ export default function Subagents({ appId, token }) {
       const [statusRes, modelsRes, workRes, storedRuntime] = await Promise.all([
         fetch('/api/auth/providers/status', { headers }),
         fetch('/api/auth/providers/models', { headers }),
-        fetch('/api/delegations?limit=200', { headers }),
+        fetch(`/api/delegations?limit=${RECENT_LIST_LIMIT}`, { headers }),
         window.mobius?.storage?.get(STATUS_KEY).catch(() => null),
       ])
       if (!statusRes.ok) throw new Error(`Connection status returned ${statusRes.status}`)
@@ -634,13 +637,14 @@ export default function Subagents({ appId, token }) {
     async function pollRecent() {
       if (document.visibilityState === 'hidden') return
       try {
-        const res = await fetch('/api/delegations?limit=200', { headers })
+        const limit = activePollLimit(recentRef.current)
+        const res = await fetch(`/api/delegations?limit=${limit}`, { headers })
         if (!res.ok) return
         const items = (await res.json()).items || []
         if (disposed) return
         const before = recentRef.current.find((row) => row.id === expanded)
         const after = items.find((row) => row.id === expanded)
-        setRecent(items)
+        setRecent(mergePolledWindow(recentRef.current, items, limit))
         if (finishedSince(before, after)) {
           loadRunDetail(after.id)
         }

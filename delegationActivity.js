@@ -14,6 +14,33 @@ export function cancellationMessage(status) {
   return 'Task had already finished'
 }
 
+// The full list is fetched once per open; while runs are active the app polls
+// only the newest rows that can still change. The window reaches just past the
+// oldest active row (rows arrive newest-first, so new runs push it down) plus
+// headroom for runs started since the last poll.
+export const RECENT_LIST_LIMIT = 200
+const ACTIVE_POLL_HEADROOM = 20
+
+export function activePollLimit(rows) {
+  let oldestActive = -1
+  rows.forEach((row, index) => { if (isActive(row.status)) oldestActive = index })
+  return Math.min(RECENT_LIST_LIMIT, oldestActive + 1 + ACTIVE_POLL_HEADROOM)
+}
+
+// The polled window replaces every row it covers, so a row that disappeared
+// from that range disappears here too; rows older than the window keep their
+// last known state, and the merged list stays within the full-list bound.
+export function mergePolledWindow(previous, windowRows, limit) {
+  if (windowRows.length < limit) return windowRows
+  const polled = new Set(windowRows.map((row) => row.id))
+  const edge = previous.findIndex((row) => row.id === windowRows.at(-1).id)
+  const older = edge === -1 ? previous : previous.slice(edge + 1)
+  return [
+    ...windowRows,
+    ...older.filter((row) => !polled.has(row.id)),
+  ].slice(0, RECENT_LIST_LIMIT)
+}
+
 export function createLatestRequest() {
   let sequence = 0
   let controller = null
