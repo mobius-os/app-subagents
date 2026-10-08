@@ -636,13 +636,11 @@ export default function Subagents({ appId, token }) {
   useEffect(() => {
     if (!token) return undefined
     let disposed = false
-    let inFlight = false
     const headers = { Authorization: `Bearer ${token}` }
     async function pollRecent() {
-      if (document.visibilityState === 'hidden' || inFlight) return
+      if (document.visibilityState === 'hidden') return
       const limit = recentPoll.current.limit(recentRef.current)
       if (limit === null) return
-      inFlight = true
       try {
         const res = await fetch(`/api/delegations?limit=${limit}`, { headers })
         if (!res.ok) return
@@ -657,8 +655,6 @@ export default function Subagents({ appId, token }) {
         }
       } catch (error) {
         if (!disposed) window.mobius?.signal?.('error', { message: error.message, source: 'delegation-refresh' })
-      } finally {
-        inFlight = false
       }
     }
     const timer = window.setInterval(pollRecent, 5000)
