@@ -14,8 +14,7 @@ export function cancellationMessage(status) {
   return 'Task had already finished'
 }
 
-// The full list is fetched once per open; while runs are active the app polls
-// only the newest rows that can still change. The window reaches just past the
+// Between periodic full reconciliations, active polls read the newest window. The window reaches just past the
 // oldest active row (rows arrive newest-first, so new runs push it down) plus
 // headroom for runs started since the last poll.
 export const RECENT_LIST_LIMIT = 200
@@ -25,6 +24,28 @@ export function activePollLimit(rows) {
   let oldestActive = -1
   rows.forEach((row, index) => { if (isActive(row.status)) oldestActive = index })
   return Math.min(RECENT_LIST_LIMIT, oldestActive + 1 + ACTIVE_POLL_HEADROOM)
+}
+
+// A settled row can be reused for another physical run without moving in the
+// created-at ordering. Keep discovery alive even after cached activity ends.
+export const FULL_RECONCILE_MS = 60_000
+
+export function createDelegationPollPlan({ now = Date.now } = {}) {
+  let lastFullAt = null
+  return {
+    limit(rows) {
+      if (lastFullAt === null || now() - lastFullAt >= FULL_RECONCILE_MS) return RECENT_LIST_LIMIT
+      return rows.some(row => isActive(row.status)) ? activePollLimit(rows) : null
+    },
+    succeeded(limit) {
+      if (limit === RECENT_LIST_LIMIT) lastFullAt = now()
+    },
+  }
+}
+
+export function runDetailChanged(before, after) {
+  return finishedSince(before, after) || Boolean(before
+    && after?.physical_run_id && before.physical_run_id !== after.physical_run_id)
 }
 
 // The polled window replaces every row it covers, so a row that disappeared
