@@ -15,6 +15,7 @@ import {
   finishedSince,
   groupDelegationsByChat,
   mergePolledWindow,
+  startActivePolling,
 } from './delegationActivity.js'
 
 const CONFIG_KEY = 'config.json'
@@ -634,10 +635,9 @@ export default function Subagents({ appId, token }) {
     if (!token || !hasActiveRecent) return undefined
     let disposed = false
     const headers = { Authorization: `Bearer ${token}` }
-    async function pollRecent() {
-      if (document.visibilityState === 'hidden') return
+    async function pollRecent(full) {
       try {
-        const limit = activePollLimit(recentRef.current)
+        const limit = full ? RECENT_LIST_LIMIT : activePollLimit(recentRef.current, expanded)
         const res = await fetch(`/api/delegations?limit=${limit}`, { headers })
         if (!res.ok) return
         const items = (await res.json()).items || []
@@ -652,13 +652,10 @@ export default function Subagents({ appId, token }) {
         if (!disposed) window.mobius?.signal?.('error', { message: error.message, source: 'delegation-refresh' })
       }
     }
-    const timer = window.setInterval(pollRecent, 5000)
-    const onVisibility = () => { if (document.visibilityState === 'visible') pollRecent() }
-    document.addEventListener('visibilitychange', onVisibility)
+    const stop = startActivePolling(pollRecent)
     return () => {
       disposed = true
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisibility)
+      stop()
     }
   }, [token, hasActiveRecent, expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 

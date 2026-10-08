@@ -16,15 +16,66 @@ export function cancellationMessage(status) {
 
 // The full list is fetched once per open; while runs are active the app polls
 // only the newest rows that can still change. The window reaches just past the
-// oldest active row (rows arrive newest-first, so new runs push it down) plus
-// headroom for runs started since the last poll.
+// oldest active row, or the open run if that is older (rows arrive
+// newest-first, so new runs push it down), plus headroom for runs started
+// since the last poll. A finished helper reused for a follow-up runs again at
+// its old position, so every FULL_POLL_EVERY-th poll reads the whole list.
 export const RECENT_LIST_LIMIT = 200
+export const FULL_POLL_EVERY = 12
 const ACTIVE_POLL_HEADROOM = 20
+const ACTIVE_POLL_MS = 5000
 
-export function activePollLimit(rows) {
-  let oldestActive = -1
-  rows.forEach((row, index) => { if (isActive(row.status)) oldestActive = index })
-  return Math.min(RECENT_LIST_LIMIT, oldestActive + 1 + ACTIVE_POLL_HEADROOM)
+export function activePollLimit(rows, openId = null) {
+  let oldest = -1
+  rows.forEach((row, index) => { if (isActive(row.status) || row.id === openId) oldest = index })
+  return Math.min(RECENT_LIST_LIMIT, oldest + 1 + ACTIVE_POLL_HEADROOM)
+}
+
+// Calls onChange(visible) now and whenever the app is shown or hidden. The
+// shell keeps hidden app frames loaded with `document.hidden` false, so the
+// runtime's frame signal is used where the host provides it.
+export function watchAppVisibility(onChange, {
+  mobius = globalThis.window?.mobius,
+  doc = globalThis.document,
+} = {}) {
+  if (mobius?.runtimeFeatures?.frameVisibility && typeof mobius.onVisibilityChange === 'function') {
+    return mobius.onVisibilityChange((visible) => onChange(visible !== false))
+  }
+  const report = () => onChange(!doc?.hidden)
+  doc?.addEventListener?.('visibilitychange', report)
+  report()
+  return () => doc?.removeEventListener?.('visibilitychange', report)
+}
+
+// Calls poll(full) every intervalMs while the app is visible, nothing while it
+// is hidden, and poll(true) at once when it is shown again. Returns stop().
+export function startActivePolling(poll, {
+  intervalMs = ACTIVE_POLL_MS,
+  fullEvery = FULL_POLL_EVERY,
+  watch = watchAppVisibility,
+} = {}) {
+  let timer = null
+  let polls = 0
+  let shown = null
+  const tick = () => {
+    polls += 1
+    poll(polls % fullEvery === 0)
+    timer = setTimeout(tick, intervalMs)
+  }
+  const unwatch = watch((visible) => {
+    if (visible === shown) return
+    const returning = shown === false
+    shown = visible
+    clearTimeout(timer)
+    timer = null
+    if (!visible) return
+    if (returning) poll(true)
+    timer = setTimeout(tick, intervalMs)
+  })
+  return () => {
+    clearTimeout(timer)
+    unwatch?.()
+  }
 }
 
 // The polled window replaces every row it covers, so a row that disappeared
