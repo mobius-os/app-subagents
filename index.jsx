@@ -9,10 +9,10 @@ import catalog from './models.json'
 import {
   ACTIVE_STATUSES,
   RECENT_LIST_LIMIT,
-  createDelegationPollPlan,
+  activePollLimit,
   cancellationMessage,
   createLatestRequest,
-  runDetailChanged,
+  finishedSince,
   groupDelegationsByChat,
   mergePolledWindow,
 } from './delegationActivity.js'
@@ -558,8 +558,8 @@ export default function Subagents({ appId, token }) {
   const readySent = useRef(false)
   const migrationSaved = useRef(false)
   const recentRef = useRef([])
-  const recentPoll = useRef(createDelegationPollPlan())
   const detailRequest = useRef(createLatestRequest())
+  const hasActiveRecent = recent.some((row) => ACTIVE_STATUSES.has(row.status))
 
   const models = useMemo(() => Object.fromEntries(
     PROVIDER_IDS.map((id) => [id, mergeModels(id, liveModels[id])])
@@ -584,10 +584,7 @@ export default function Subagents({ appId, token }) {
       if (!statusRes.ok) throw new Error(`Connection status returned ${statusRes.status}`)
       setConnections(await statusRes.json())
       if (modelsRes.ok) setLiveModels(await modelsRes.json())
-      if (workRes.ok) {
-        setRecent((await workRes.json()).items || [])
-        recentPoll.current.succeeded(RECENT_LIST_LIMIT)
-      }
+      if (workRes.ok) setRecent((await workRes.json()).items || [])
       if (storedRuntime?.providers) setRuntime(storedRuntime.providers)
       window.mobius?.signal?.('providers_refreshed')
     } catch (error) {
@@ -634,23 +631,21 @@ export default function Subagents({ appId, token }) {
   useEffect(() => { recentRef.current = recent }, [recent])
 
   useEffect(() => {
-    if (!token) return undefined
+    if (!token || !hasActiveRecent) return undefined
     let disposed = false
     const headers = { Authorization: `Bearer ${token}` }
     async function pollRecent() {
       if (document.visibilityState === 'hidden') return
-      const limit = recentPoll.current.limit(recentRef.current)
-      if (limit === null) return
       try {
+        const limit = activePollLimit(recentRef.current)
         const res = await fetch(`/api/delegations?limit=${limit}`, { headers })
         if (!res.ok) return
         const items = (await res.json()).items || []
         if (disposed) return
-        recentPoll.current.succeeded(limit)
         const before = recentRef.current.find((row) => row.id === expanded)
         const after = items.find((row) => row.id === expanded)
         setRecent(mergePolledWindow(recentRef.current, items, limit))
-        if (runDetailChanged(before, after)) {
+        if (finishedSince(before, after)) {
           loadRunDetail(after.id)
         }
       } catch (error) {
@@ -665,7 +660,7 @@ export default function Subagents({ appId, token }) {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [token, expanded]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, hasActiveRecent, expanded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => detailRequest.current.abort(), [])
 
