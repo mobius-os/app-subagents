@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test, { mock } from 'node:test'
 
 import {
+  ACTIVE_STATUSES,
   FULL_POLL_EVERY,
   RECENT_LIST_LIMIT,
   activePollLimit,
@@ -122,13 +123,16 @@ function visibilityHarness() {
   }
 }
 
-test('active polling reads the whole list periodically, so a reused older helper updates', () => {
+test('active polling reads the whole list periodically, so a reused older helper updates', async () => {
   mock.timers.enable({ apis: ['setTimeout'] })
   try {
     const polls = []
     const visibility = visibilityHarness()
     const stop = startActivePolling((full) => { polls.push(full) }, { intervalMs: 1000, watch: visibility.watch })
-    for (let i = 0; i < FULL_POLL_EVERY; i += 1) mock.timers.tick(1000)
+    for (let i = 0; i < FULL_POLL_EVERY; i += 1) {
+      mock.timers.tick(1000)
+      await new Promise(setImmediate)
+    }
     assert.equal(polls.length, FULL_POLL_EVERY)
     assert.deepEqual(polls.map((full, index) => full ? index + 1 : 0).filter(Boolean), [FULL_POLL_EVERY])
     stop()
@@ -140,23 +144,49 @@ test('active polling reads the whole list periodically, so a reused older helper
   }
 })
 
-test('active polling pauses while the app is hidden and reads everything on return', () => {
+test('active polling pauses while the app is hidden and reads everything on return', async () => {
   mock.timers.enable({ apis: ['setTimeout'] })
   try {
     const polls = []
     const visibility = visibilityHarness()
     const stop = startActivePolling((full) => { polls.push(full) }, { intervalMs: 1000, watch: visibility.watch })
     mock.timers.tick(1000)
+    await new Promise(setImmediate)
     assert.deepEqual(polls, [false])
     visibility.set(false)
     for (let i = 0; i < 60; i += 1) mock.timers.tick(1000)
     assert.deepEqual(polls, [false], 'no polls while hidden')
     visibility.set(true)
+    await new Promise(setImmediate)
     assert.deepEqual(polls, [false, true], 'returning reads the whole list at once')
     visibility.set(true)
     assert.equal(polls.length, 2, 'a repeated visible signal does not poll again')
     mock.timers.tick(1000)
+    await new Promise(setImmediate)
     assert.deepEqual(polls, [false, true, false])
+    stop()
+  } finally {
+    mock.timers.reset()
+  }
+})
+
+test('visibility return queues one full refresh behind an unfinished poll', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    let settle
+    const polls = []
+    const visibility = visibilityHarness()
+    const stop = startActivePolling((full) => {
+      polls.push(full)
+      if (polls.length === 1) return new Promise((resolve) => { settle = resolve })
+    }, { intervalMs: 1000, watch: visibility.watch })
+    mock.timers.tick(1000)
+    visibility.set(false)
+    visibility.set(true)
+    assert.deepEqual(polls, [false], 'the return does not overlap the pending request')
+    settle()
+    await new Promise(setImmediate)
+    assert.deepEqual(polls, [false, true], 'one full refresh follows the pending request')
     stop()
   } finally {
     mock.timers.reset()
@@ -188,4 +218,42 @@ test('the delegation list polls through the visibility-aware scheduler', () => {
   const app = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   assert.match(app, /startActivePolling\(pollRecent\)/)
   assert.doesNotMatch(app, /setInterval\(pollRecent/)
+})
+
+test('the mounted polling effect discovers an older reused helper before its last active row tears it down', async () => {
+  const app = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
+  const match = app.match(/useEffect\((\(\) => \{\n    if \(!token \|\| !hasActiveRecent\)[\s\S]*?\n  \}), \[token, hasActiveRecent, expanded\]/)
+  assert.ok(match, 'exercise the actual polling effect, including its cleanup')
+  const rows = Array.from({ length: 100 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'running' : 'completed' }))
+  const server = rows.map((row) => ({ ...row }))
+  server[0].status = 'completed'
+  server[60].status = 'running'
+  const recentRef = { current: rows }
+  const requests = []
+  let poll
+  let stopped = false
+  let cleanup
+  const setRecent = (next) => {
+    recentRef.current = next
+    if (!next.some((row) => ACTIVE_STATUSES.has(row.status))) {
+      cleanup?.()
+      cleanup = undefined
+    }
+  }
+  const effect = new Function('token', 'hasActiveRecent', 'expanded', 'recentRef', 'setRecent',
+    'fetch', 'startActivePolling', 'activePollLimit', 'mergePolledWindow', 'RECENT_LIST_LIMIT',
+    'finishedSince', 'loadRunDetail', 'window', 'ACTIVE_STATUSES', `return (${match[1]})`)('token', true, null,
+    recentRef, setRecent, async (url) => {
+      const limit = Number(new URL(url, 'http://test').searchParams.get('limit'))
+      requests.push(limit)
+      return { ok: true, json: async () => ({ items: server.slice(0, limit) }) }
+    }, (callback) => { poll = callback; return () => { stopped = true } }, activePollLimit,
+    mergePolledWindow, RECENT_LIST_LIMIT, finishedSince, () => {}, { mobius: {} }, ACTIVE_STATUSES)
+  cleanup = effect()
+  await poll(false)
+  assert.deepEqual(requests, [21, RECENT_LIST_LIMIT])
+  assert.equal(recentRef.current[60].status, 'running')
+  assert.equal(stopped, false, 'the effect remains mounted to track the reused helper')
+  cleanup()
+  assert.equal(stopped, true)
 })

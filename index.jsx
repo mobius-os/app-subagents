@@ -640,11 +640,21 @@ export default function Subagents({ appId, token }) {
         const limit = full ? RECENT_LIST_LIMIT : activePollLimit(recentRef.current, expanded)
         const res = await fetch(`/api/delegations?limit=${limit}`, { headers })
         if (!res.ok) return
-        const items = (await res.json()).items || []
+        let items = (await res.json()).items || []
         if (disposed) return
+        // A reduced window with no active rows cannot prove that no helper is
+        // running: a completed helper farther down may have been reused.
+        // Reconcile the whole list before allowing this effect to stop.
+        if (!full && items.length === limit && !items.some((row) => ACTIVE_STATUSES.has(row.status))) {
+          const all = await fetch(`/api/delegations?limit=${RECENT_LIST_LIMIT}`, { headers })
+          if (!all.ok) return
+          items = (await all.json()).items || []
+          if (disposed) return
+          full = true
+        }
         const before = recentRef.current.find((row) => row.id === expanded)
         const after = items.find((row) => row.id === expanded)
-        setRecent(mergePolledWindow(recentRef.current, items, limit))
+        setRecent(mergePolledWindow(recentRef.current, items, full ? RECENT_LIST_LIMIT : limit))
         if (finishedSince(before, after)) {
           loadRunDetail(after.id)
         }

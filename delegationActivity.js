@@ -47,8 +47,8 @@ export function watchAppVisibility(onChange, {
   return () => doc?.removeEventListener?.('visibilitychange', report)
 }
 
-// Calls poll(full) every intervalMs while the app is visible, nothing while it
-// is hidden, and poll(true) at once when it is shown again. Returns stop().
+// Polls after each request settles while visible, never overlaps requests,
+// and queues a full refresh on return from a hidden frame. Returns stop().
 export function startActivePolling(poll, {
   intervalMs = ACTIVE_POLL_MS,
   fullEvery = FULL_POLL_EVERY,
@@ -57,10 +57,30 @@ export function startActivePolling(poll, {
   let timer = null
   let polls = 0
   let shown = null
+  let stopped = false
+  let inFlight = false
+  let pendingFull = false
+  const schedule = () => {
+    if (shown && !stopped && !inFlight && !timer) timer = setTimeout(tick, intervalMs)
+  }
+  const run = (full) => {
+    if (inFlight) { pendingFull ||= full; return }
+    inFlight = true
+    let result
+    try { result = poll(full) } catch (error) { result = Promise.reject(error) }
+    Promise.resolve(result).catch(() => {}).finally(() => {
+      inFlight = false
+      if (stopped || !shown) return
+      if (pendingFull) {
+        pendingFull = false
+        run(true)
+      } else schedule()
+    })
+  }
   const tick = () => {
+    timer = null
     polls += 1
-    poll(polls % fullEvery === 0)
-    timer = setTimeout(tick, intervalMs)
+    run(polls % fullEvery === 0)
   }
   const unwatch = watch((visible) => {
     if (visible === shown) return
@@ -69,10 +89,11 @@ export function startActivePolling(poll, {
     clearTimeout(timer)
     timer = null
     if (!visible) return
-    if (returning) poll(true)
-    timer = setTimeout(tick, intervalMs)
+    if (returning) run(true)
+    else schedule()
   })
   return () => {
+    stopped = true
     clearTimeout(timer)
     unwatch?.()
   }
