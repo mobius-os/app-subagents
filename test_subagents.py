@@ -239,15 +239,14 @@ class SubagentsContractTests(unittest.TestCase):
 
     self.assertIsNone(calls[0][2]["cwd"])
 
-  def test_completed_truncated_result_names_the_durable_transcript(self):
+  def test_completed_large_result_is_returned_in_full(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:
       handle.write("Audit the large result path.")
       prompt_path = handle.name
     args = run_args(prompt_path, name="large-result")
     delegation = {
       "id": "delegation-large", "child_chat_id": "child-large",
-      "status": "completed", "result": "Partial result.",
-      "result_truncated": True,
+      "status": "completed", "result": "Full report. " * 10000,
     }
     stdout = io.StringIO()
     stderr = io.StringIO()
@@ -261,9 +260,8 @@ class SubagentsContractTests(unittest.TestCase):
     finally:
       Path(prompt_path).unlink(missing_ok=True)
 
-    self.assertEqual(stdout.getvalue(), "Partial result.\n")
-    self.assertIn("child-large", stderr.getvalue())
-    self.assertIn("complete transcript", stderr.getvalue())
+    self.assertEqual(stdout.getvalue(), delegation["result"].strip() + "\n")
+    self.assertEqual(stderr.getvalue(), "")
 
   def test_background_running_state_does_not_claim_provider_capacity(self):
     with tempfile.NamedTemporaryFile("w", delete=False) as handle:

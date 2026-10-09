@@ -8,6 +8,7 @@ import {
 import catalog from './models.json'
 import {
   ACTIVE_STATUSES,
+  canStop,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
@@ -333,7 +334,7 @@ function statusTone(status) {
 
 const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex' }
 
-function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+function RunRow({ row, appId, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
   const duration = formatDuration(row)
   const tokens = formatNumber(row.usage?.total_tokens)
   const cost = formatCost(row.usage?.cost_usd)
@@ -357,7 +358,7 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
       {open && (
         <div className="sa-run-detail">
           <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : 'No written result was recorded.')}</div>
-          {active && (
+          {canStop(row, appId) && (
             <div className="sa-run-actions">
               <button className="sa-action is-danger" onClick={() => onCancel(row)}>
                 {cancelArmed === row.id ? 'Confirm stop' : 'Stop task'}
@@ -371,7 +372,7 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
   )
 }
 
-function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+function RecentWork({ rows, appId, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
   const chats = useMemo(() => groupDelegationsByChat(rows), [rows])
   return (
     <section className="sa-card">
@@ -402,7 +403,7 @@ function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detail
                   {open && (
                     <div className="sa-chat-runs">
                       {chat.runs.map((row) => (
-                        <RunRow key={row.id} row={row} expanded={expanded} detail={detail}
+                        <RunRow key={row.id} row={row} appId={appId} expanded={expanded} detail={detail}
                           detailBusy={detailBusy} cancelArmed={cancelArmed} onToggle={onToggle} onCancel={onCancel} />
                       ))}
                     </div>
@@ -789,7 +790,7 @@ export default function Subagents({ appId, token }) {
                 connection={connections?.[id]} models={models[id]} runtime={runtime[id]}
                 busy={busy} onPatch={patchProvider} />
             ))}
-            <RecentWork rows={recent} expandedChat={expandedChat} onToggleChat={toggleChat}
+            <RecentWork rows={recent} appId={appId} expandedChat={expandedChat} onToggleChat={toggleChat}
               expanded={expanded} detail={detail} detailBusy={detailBusy}
               cancelArmed={cancelArmed} onToggle={toggleRun} onCancel={cancelRun} />
           </>

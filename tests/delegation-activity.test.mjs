@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
+  canStop,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
+  isActive,
 } from '../delegationActivity.js'
 
 test('only the newest detail request may update the expanded task', () => {
@@ -57,4 +59,19 @@ test('compact header uses an inset hairline instead of an edge-to-edge border', 
   const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   assert.match(source, /\.sa-header-inner::after\s*\{[^}]*inset-inline:\s*16px/s)
   assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
+})
+
+test('admitted and recovering source work counts as active', () => {
+  for (const status of ['accepted', 'retrying']) assert.equal(isActive(status), true)
+  assert.equal(finishedSince({ status: 'accepted' }, { status: 'running' }), false)
+  assert.equal(finishedSince({ status: 'retrying' }, { status: 'completed' }), true)
+})
+
+test('Subagents offers Stop only for active helpers it started itself', () => {
+  assert.equal(canStop({ status: 'running', app_id: 102 }, 102), true)
+  assert.equal(canStop({ status: 'accepted', app_id: 102 }, '102'), true)
+  // Helpers from other chats and apps are visible but stay with their owner.
+  assert.equal(canStop({ status: 'running', app_id: null }, 102), false)
+  assert.equal(canStop({ status: 'running', app_id: 7 }, 102), false)
+  assert.equal(canStop({ status: 'completed', app_id: 102 }, 102), false)
 })

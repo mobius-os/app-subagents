@@ -422,13 +422,6 @@ def run(args: argparse.Namespace) -> int:
       )
       if result:
         print(result)
-      if delegation.get("result_truncated") is True:
-        print(
-          "Möbius truncated this unusually large result. Open the durable "
-          f"child chat {delegation.get('child_chat_id') or delegation_id} "
-          "for the complete transcript.",
-          file=sys.stderr,
-        )
       return 0
     if status == "paused":
       return _paused_result(snap, args.provider, model, delegation)
