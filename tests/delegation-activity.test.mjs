@@ -3,18 +3,22 @@ import { readFileSync } from 'node:fs'
 import test, { mock } from 'node:test'
 
 import {
-  canStop,
   ACTIVE_STATUSES,
   FULL_POLL_EVERY,
   RECENT_LIST_LIMIT,
   activePollLimit,
+  canStop,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
   isActive,
+  isUnfinished,
   mergePolledWindow,
+  openQuestion,
   startActivePolling,
+  statusLabel,
+  statusTone,
   watchAppVisibility,
 } from '../delegationActivity.js'
 
@@ -68,15 +72,110 @@ test('compact header uses an inset hairline instead of an edge-to-edge border', 
   assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
 })
 
-test('admitted and recovering source work counts as active', () => {
-  for (const status of ['accepted', 'retrying']) assert.equal(isActive(status), true)
-  assert.equal(finishedSince({ status: 'accepted' }, { status: 'running' }), false)
-  assert.equal(finishedSince({ status: 'retrying' }, { status: 'completed' }), true)
+const asked = (id = 'q1', extra = {}) => ({
+  status: 'needs_input',
+  question: { id, question: 'Which branch should I target?', options: ['main', 'develop'] },
+  ...extra,
 })
 
-test('Subagents offers Stop only for active helpers it started itself', () => {
+test('a helper waiting for an answer is unfinished but not executing', () => {
+  assert.equal(isActive('needs_input'), false)
+  assert.equal(isUnfinished('needs_input'), true)
+  for (const status of ['starting', 'running', 'resuming', 'paused']) {
+    assert.equal(isActive(status), true)
+    assert.equal(isUnfinished(status), true)
+  }
+  for (const status of ['completed', 'failed', 'needs_review', 'stopped', 'cancelled', 'interrupted']) {
+    assert.equal(isUnfinished(status), false)
+  }
+})
+
+test('waiting helpers read as Needs an answer and unknown states are not failures', () => {
+  assert.equal(statusLabel('needs_input'), 'Needs an answer')
+  assert.equal(statusTone('needs_input'), 'waiting')
+  assert.equal(statusLabel('needs_review'), 'needs review')
+  assert.equal(statusTone('running'), 'active')
+  assert.equal(statusTone('completed'), 'done')
+  for (const status of ['failed', 'needs_review', 'stopped', 'cancelled', 'interrupted']) {
+    assert.equal(statusTone(status), 'failed')
+  }
+  assert.equal(statusTone('some_future_state'), 'neutral')
+})
+
+test('the open question comes only from a waiting row', () => {
+  assert.deepEqual(openQuestion(asked()), {
+    id: 'q1', text: 'Which branch should I target?', options: ['main', 'develop'],
+  })
+  assert.equal(openQuestion({ status: 'running', question: asked().question }), null)
+  assert.equal(openQuestion({ status: 'needs_input', question: null }), null)
+  assert.equal(openQuestion({ status: 'needs_input' }), null)
+  assert.deepEqual(
+    openQuestion({ status: 'needs_input', question: { id: 'q2', question: 'Go?' } }).options, [],
+  )
+})
+
+test('polling reloads detail across every question transition', () => {
+  // Running -> asks: execution stopped, the question must appear.
+  assert.equal(finishedSince({ status: 'running' }, asked()), true)
+  // Still waiting on the same question: nothing new.
+  assert.equal(finishedSince(asked(), asked()), false)
+  // Answered and resumed: still executing, not finished.
+  assert.equal(finishedSince(asked(), { status: 'running' }), false)
+  // Answered and finished between polls.
+  assert.equal(finishedSince(asked(), { status: 'completed' }), true)
+  // Answered, then asked again between polls.
+  assert.equal(finishedSince(asked('q1'), asked('q2')), true)
+  // Explicitly stopped while waiting.
+  assert.equal(finishedSince(asked(), { status: 'cancelled' }), true)
+  // Terminal rows never re-trigger.
+  assert.equal(finishedSince({ status: 'cancelled' }, { status: 'cancelled' }), false)
+})
+
+test('stopping a waiting helper is reported like stopping a running one', () => {
+  assert.equal(cancellationMessage('needs_input'), 'Stop requested')
+  assert.equal(cancellationMessage('cancelled'), 'Task stopped')
+})
+
+test('waiting helpers are counted apart from running helpers', () => {
+  const groups = groupDelegationsByChat([
+    { id: 'a', parent_chat_id: 'c1', status: 'running' },
+    { id: 'b', parent_chat_id: 'c1', ...asked() },
+    { id: 'c', parent_chat_id: 'c1', status: 'paused' },
+    { id: 'd', parent_chat_id: 'c1', status: 'completed' },
+  ])
+  assert.equal(groups[0].active, 2)
+  assert.equal(groups[0].waiting, 1)
+  assert.equal(groups[0].count, 4)
+})
+
+test('the UI offers Stop for its own waiting helpers and keeps polling them', () => {
+  const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
+  assert.match(source, /const cancelable = canStop\(row, appId\)/)
+  assert.match(source, /\{cancelable && \(/)
+  assert.match(source, /recent\.some\(\(row\) => isUnfinished\(row\.status\)\)/)
+})
+
+test('admitted and recovering source work stays active, polled, and stoppable', () => {
+  for (const status of ['accepted', 'retrying']) {
+    assert.equal(isActive(status), true)
+    assert.equal(isUnfinished(status), true)
+    assert.equal(statusTone(status), 'active')
+    assert.equal(cancellationMessage(status), 'Stop requested')
+  }
+  assert.equal(finishedSince({ status: 'accepted' }, { status: 'running' }), false)
+  assert.equal(finishedSince({ status: 'retrying' }, { status: 'completed' }), true)
+  const [group] = groupDelegationsByChat([
+    { id: 'a', parent_chat_id: 'c1', status: 'accepted' },
+    { id: 'b', parent_chat_id: 'c1', status: 'retrying' },
+    { id: 'c', parent_chat_id: 'c1', status: 'needs_input' },
+  ])
+  assert.equal(group.active, 2)
+  assert.equal(group.waiting, 1)
+})
+
+test('Subagents offers Stop only for unfinished helpers it started itself', () => {
   assert.equal(canStop({ status: 'running', app_id: 102 }, 102), true)
-  assert.equal(canStop({ status: 'accepted', app_id: 102 }, '102'), true)
+  assert.equal(canStop({ status: 'needs_input', app_id: 102 }, '102'), true)
   // Helpers from other chats and apps are visible but stay with their owner.
   assert.equal(canStop({ status: 'running', app_id: null }, 102), false)
   assert.equal(canStop({ status: 'running', app_id: 7 }, 102), false)
