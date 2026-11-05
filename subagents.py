@@ -230,9 +230,16 @@ def _resolve_model(provider: str, requested: str | None, state: dict) -> str | N
     raise SubagentError(
       f"Model {requested!r} is ambiguous: {', '.join(matches)}."
     )
+  # Name the real choices: the registry changes, and an agent picking a model
+  # cannot see it, so a refusal without them only invites another guess.
+  available = ", ".join(
+    f"{row['id']} ({row['name']})" if row.get("name") else str(row["id"])
+    for row in candidates if row.get("id")
+  ) or "none"
+  hint = " Omit the model to use the default." if requested else ""
   raise SubagentError(
     f"Model {requested or state.get('default_model')!r} is not in the "
-    f"current {provider} registry."
+    f"current {provider} registry. Available: {available}.{hint}"
   )
 
 
