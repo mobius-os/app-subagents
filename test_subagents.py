@@ -159,6 +159,25 @@ class SubagentsContractTests(unittest.TestCase):
     with self.assertRaisesRegex(subagents.SubagentError, "not in the current"):
       subagents._resolve_model("codex", "invented", state)
 
+  def test_unknown_model_refusal_names_the_real_choices(self):
+    """A guessed model id is corrected in one step, not by another guess."""
+    state = {
+      "default_model": "claude-opus-5-5",
+      "models": [
+        {"id": "claude-opus-5-5", "name": "Claude Opus 5.5"},
+        {"id": "claude-fable-5-1", "name": "Claude Fable 5.1"},
+      ],
+      "aliases": {},
+    }
+    with self.assertRaises(subagents.SubagentError) as refused:
+      subagents._resolve_model("claude", "claude-haiku-4-5", state)
+    message = str(refused.exception)
+    self.assertIn(
+      "Available: claude-opus-5-5 (Claude Opus 5.5), "
+      "claude-fable-5-1 (Claude Fable 5.1)", message,
+    )
+    self.assertIn("Omit the model", message)
+
   def test_runtime_failure_classification_keeps_quota_distinct(self):
     self.assertEqual(
       subagents._classify_failure("You've hit your monthly spend limit"),
