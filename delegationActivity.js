@@ -76,7 +76,7 @@ const ACTIVE_POLL_MS = 5000
 
 export function activePollLimit(rows, openId = null) {
   let oldest = -1
-  rows.forEach((row, index) => { if (isActive(row.status) || row.id === openId) oldest = index })
+  rows.forEach((row, index) => { if (isUnfinished(row.status) || row.id === openId) oldest = index })
   return Math.min(RECENT_LIST_LIMIT, oldest + 1 + ACTIVE_POLL_HEADROOM)
 }
 

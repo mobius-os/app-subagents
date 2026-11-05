@@ -3,7 +3,6 @@ import { readFileSync } from 'node:fs'
 import test, { mock } from 'node:test'
 
 import {
-  ACTIVE_STATUSES,
   FULL_POLL_EVERY,
   RECENT_LIST_LIMIT,
   activePollLimit,
@@ -215,6 +214,12 @@ test('a row that vanished inside the polled window is dropped', () => {
     'a short window is the whole list')
 })
 
+test('a helper waiting for an answer keeps a narrow poll window', () => {
+  const rows = Array.from({ length: 150 }, (_, i) => ({ id: `d${i}`, status: 'completed' }))
+  rows[0].status = 'needs_input'
+  assert.equal(activePollLimit(rows), 21)
+})
+
 test('an open run older than the active window is polled with it', () => {
   const rows = Array.from({ length: 120 }, (_, index) => ({
     id: `d${index}`,
@@ -336,40 +341,51 @@ test('the delegation list polls through the visibility-aware scheduler', () => {
   assert.doesNotMatch(app, /setInterval\(pollRecent/)
 })
 
-test('the mounted polling effect discovers an older reused helper before its last active row tears it down', async () => {
+function mountPollingEffect(rows, server) {
   const app = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   const match = app.match(/useEffect\((\(\) => \{\n    if \(!token \|\| !hasActiveRecent\)[\s\S]*?\n  \}), \[token, hasActiveRecent, expanded\]/)
   assert.ok(match, 'exercise the actual polling effect, including its cleanup')
-  const rows = Array.from({ length: 100 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'running' : 'completed' }))
-  const server = rows.map((row) => ({ ...row }))
-  server[0].status = 'completed'
-  server[60].status = 'running'
   const recentRef = { current: rows }
-  const requests = []
-  let poll
-  let stopped = false
-  let cleanup
+  const state = { requests: [], poll: null, stopped: false, cleanup: undefined, recentRef }
   const setRecent = (next) => {
     recentRef.current = next
-    if (!next.some((row) => ACTIVE_STATUSES.has(row.status))) {
-      cleanup?.()
-      cleanup = undefined
+    if (!next.some((row) => isUnfinished(row.status))) {
+      state.cleanup?.()
+      state.cleanup = undefined
     }
   }
   const effect = new Function('token', 'hasActiveRecent', 'expanded', 'recentRef', 'setRecent',
     'fetch', 'startActivePolling', 'activePollLimit', 'mergePolledWindow', 'RECENT_LIST_LIMIT',
-    'finishedSince', 'loadRunDetail', 'window', 'ACTIVE_STATUSES', `return (${match[1]})`)('token', true, null,
+    'finishedSince', 'loadRunDetail', 'window', 'isUnfinished', `return (${match[1]})`)('token', true, null,
     recentRef, setRecent, async (url) => {
       const limit = Number(new URL(url, 'http://test').searchParams.get('limit'))
-      requests.push(limit)
+      state.requests.push(limit)
       return { ok: true, json: async () => ({ items: server.slice(0, limit) }) }
-    }, (callback) => { poll = callback; return () => { stopped = true } }, activePollLimit,
-    mergePolledWindow, RECENT_LIST_LIMIT, finishedSince, () => {}, { mobius: {} }, ACTIVE_STATUSES)
-  cleanup = effect()
-  await poll(false)
-  assert.deepEqual(requests, [21, RECENT_LIST_LIMIT])
-  assert.equal(recentRef.current[60].status, 'running')
-  assert.equal(stopped, false, 'the effect remains mounted to track the reused helper')
-  cleanup()
-  assert.equal(stopped, true)
+    }, (callback) => { state.poll = callback; return () => { state.stopped = true } }, activePollLimit,
+    mergePolledWindow, RECENT_LIST_LIMIT, finishedSince, () => {}, { mobius: {} }, isUnfinished)
+  state.cleanup = effect()
+  return state
+}
+
+test('the mounted polling effect discovers an older reused helper before its last active row tears it down', async () => {
+  const rows = Array.from({ length: 100 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'running' : 'completed' }))
+  const server = rows.map((row) => ({ ...row }))
+  server[0].status = 'completed'
+  server[60].status = 'running'
+  const state = mountPollingEffect(rows, server)
+  await state.poll(false)
+  assert.deepEqual(state.requests, [21, RECENT_LIST_LIMIT])
+  assert.equal(state.recentRef.current[60].status, 'running')
+  assert.equal(state.stopped, false, 'the effect remains mounted to track the reused helper')
+  state.cleanup()
+  assert.equal(state.stopped, true)
+})
+
+test('a list whose only unfinished helper is waiting polls one narrow window', async () => {
+  const rows = Array.from({ length: 150 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'needs_input' : 'completed' }))
+  const state = mountPollingEffect(rows, rows.map((row) => ({ ...row })))
+  await state.poll(false)
+  await state.poll(false)
+  assert.deepEqual(state.requests, [21, 21], 'no full-list re-read while a helper waits')
+  assert.equal(state.stopped, false, 'polling continues for the whole wait')
 })

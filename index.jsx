@@ -7,7 +7,6 @@ import {
 } from '@openai/apps-sdk-ui/components/Icon'
 import catalog from './models.json'
 import {
-  ACTIVE_STATUSES,
   RECENT_LIST_LIMIT,
   activePollLimit,
   canStop,
@@ -671,10 +670,10 @@ export default function Subagents({ appId, token }) {
         if (!res.ok) return
         let items = (await res.json()).items || []
         if (disposed) return
-        // A reduced window with no active rows cannot prove that no helper is
-        // running: a completed helper farther down may have been reused.
+        // A reduced window with no unfinished rows cannot prove that no helper
+        // is unfinished: a completed helper farther down may have been reused.
         // Reconcile the whole list before allowing this effect to stop.
-        if (!full && items.length === limit && !items.some((row) => ACTIVE_STATUSES.has(row.status))) {
+        if (!full && items.length === limit && !items.some((row) => isUnfinished(row.status))) {
           const all = await fetch(`/api/delegations?limit=${RECENT_LIST_LIMIT}`, { headers })
           if (!all.ok) return
           items = (await all.json()).items || []
