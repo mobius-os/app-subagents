@@ -15,6 +15,9 @@
   "storage": {
     "max_bytes": 1048576
   },
+  "permissions": {
+    "helper_activity_read": true
+  },
   "source_files": [
     "delegationActivity.js",
     "models.json",

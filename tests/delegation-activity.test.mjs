@@ -3,16 +3,21 @@ import { readFileSync } from 'node:fs'
 import test, { mock } from 'node:test'
 
 import {
-  ACTIVE_STATUSES,
   FULL_POLL_EVERY,
   RECENT_LIST_LIMIT,
   activePollLimit,
+  canStop,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
+  isActive,
+  isUnfinished,
   mergePolledWindow,
+  openQuestion,
   startActivePolling,
+  statusLabel,
+  statusTone,
   watchAppVisibility,
 } from '../delegationActivity.js'
 
@@ -66,6 +71,116 @@ test('compact header uses an inset hairline instead of an edge-to-edge border', 
   assert.doesNotMatch(source, /\.sa-header(-inner)?\s*\{[^}]*border-bottom/s)
 })
 
+const asked = (id = 'q1', extra = {}) => ({
+  status: 'needs_input',
+  question: { id, question: 'Which branch should I target?', options: ['main', 'develop'] },
+  ...extra,
+})
+
+test('a helper waiting for an answer is unfinished but not executing', () => {
+  assert.equal(isActive('needs_input'), false)
+  assert.equal(isUnfinished('needs_input'), true)
+  for (const status of ['starting', 'running', 'resuming', 'paused']) {
+    assert.equal(isActive(status), true)
+    assert.equal(isUnfinished(status), true)
+  }
+  for (const status of ['completed', 'failed', 'needs_review', 'stopped', 'cancelled', 'interrupted']) {
+    assert.equal(isUnfinished(status), false)
+  }
+})
+
+test('waiting helpers read as Needs an answer and unknown states are not failures', () => {
+  assert.equal(statusLabel('needs_input'), 'Needs an answer')
+  assert.equal(statusTone('needs_input'), 'waiting')
+  assert.equal(statusLabel('needs_review'), 'needs review')
+  assert.equal(statusTone('running'), 'active')
+  assert.equal(statusTone('completed'), 'done')
+  for (const status of ['failed', 'needs_review', 'stopped', 'cancelled', 'interrupted']) {
+    assert.equal(statusTone(status), 'failed')
+  }
+  assert.equal(statusTone('some_future_state'), 'neutral')
+})
+
+test('the open question comes only from a waiting row', () => {
+  assert.deepEqual(openQuestion(asked()), {
+    id: 'q1', text: 'Which branch should I target?', options: ['main', 'develop'],
+  })
+  assert.equal(openQuestion({ status: 'running', question: asked().question }), null)
+  assert.equal(openQuestion({ status: 'needs_input', question: null }), null)
+  assert.equal(openQuestion({ status: 'needs_input' }), null)
+  assert.deepEqual(
+    openQuestion({ status: 'needs_input', question: { id: 'q2', question: 'Go?' } }).options, [],
+  )
+})
+
+test('polling reloads detail across every question transition', () => {
+  // Running -> asks: execution stopped, the question must appear.
+  assert.equal(finishedSince({ status: 'running' }, asked()), true)
+  // Still waiting on the same question: nothing new.
+  assert.equal(finishedSince(asked(), asked()), false)
+  // Answered and resumed: still executing, not finished.
+  assert.equal(finishedSince(asked(), { status: 'running' }), false)
+  // Answered and finished between polls.
+  assert.equal(finishedSince(asked(), { status: 'completed' }), true)
+  // Answered, then asked again between polls.
+  assert.equal(finishedSince(asked('q1'), asked('q2')), true)
+  // Explicitly stopped while waiting.
+  assert.equal(finishedSince(asked(), { status: 'cancelled' }), true)
+  // Terminal rows never re-trigger.
+  assert.equal(finishedSince({ status: 'cancelled' }, { status: 'cancelled' }), false)
+})
+
+test('stopping a waiting helper is reported like stopping a running one', () => {
+  assert.equal(cancellationMessage('needs_input'), 'Stop requested')
+  assert.equal(cancellationMessage('cancelled'), 'Task stopped')
+})
+
+test('waiting helpers are counted apart from running helpers', () => {
+  const groups = groupDelegationsByChat([
+    { id: 'a', parent_chat_id: 'c1', status: 'running' },
+    { id: 'b', parent_chat_id: 'c1', ...asked() },
+    { id: 'c', parent_chat_id: 'c1', status: 'paused' },
+    { id: 'd', parent_chat_id: 'c1', status: 'completed' },
+  ])
+  assert.equal(groups[0].active, 2)
+  assert.equal(groups[0].waiting, 1)
+  assert.equal(groups[0].count, 4)
+})
+
+test('the UI offers Stop for its own waiting helpers and keeps polling them', () => {
+  const source = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
+  assert.match(source, /const cancelable = canStop\(row, appId\)/)
+  assert.match(source, /\{cancelable && \(/)
+  assert.match(source, /recent\.some\(\(row\) => isUnfinished\(row\.status\)\)/)
+})
+
+test('admitted and recovering source work stays active, polled, and stoppable', () => {
+  for (const status of ['accepted', 'retrying']) {
+    assert.equal(isActive(status), true)
+    assert.equal(isUnfinished(status), true)
+    assert.equal(statusTone(status), 'active')
+    assert.equal(cancellationMessage(status), 'Stop requested')
+  }
+  assert.equal(finishedSince({ status: 'accepted' }, { status: 'running' }), false)
+  assert.equal(finishedSince({ status: 'retrying' }, { status: 'completed' }), true)
+  const [group] = groupDelegationsByChat([
+    { id: 'a', parent_chat_id: 'c1', status: 'accepted' },
+    { id: 'b', parent_chat_id: 'c1', status: 'retrying' },
+    { id: 'c', parent_chat_id: 'c1', status: 'needs_input' },
+  ])
+  assert.equal(group.active, 2)
+  assert.equal(group.waiting, 1)
+})
+
+test('Subagents offers Stop only for unfinished helpers it started itself', () => {
+  assert.equal(canStop({ status: 'running', app_id: 102 }, 102), true)
+  assert.equal(canStop({ status: 'needs_input', app_id: 102 }, '102'), true)
+  // Helpers from other chats and apps are visible but stay with their owner.
+  assert.equal(canStop({ status: 'running', app_id: null }, 102), false)
+  assert.equal(canStop({ status: 'running', app_id: 7 }, 102), false)
+  assert.equal(canStop({ status: 'completed', app_id: 102 }, 102), false)
+})
+
 test('active polling fetches only the window that reaches the oldest active run', () => {
   const rows = Array.from({ length: 150 }, (_, i) => ({ id: `d${i}`, status: 'completed' }))
   assert.equal(activePollLimit(rows), 20)
@@ -97,6 +212,12 @@ test('a row that vanished inside the polled window is dropped', () => {
     ['c', 'b', 'a'])
   assert.deepEqual(mergePolledWindow(previous, [{ id: 'c' }], 5).map((row) => row.id), ['c'],
     'a short window is the whole list')
+})
+
+test('a helper waiting for an answer keeps a narrow poll window', () => {
+  const rows = Array.from({ length: 150 }, (_, i) => ({ id: `d${i}`, status: 'completed' }))
+  rows[0].status = 'needs_input'
+  assert.equal(activePollLimit(rows), 21)
 })
 
 test('an open run older than the active window is polled with it', () => {
@@ -220,40 +341,51 @@ test('the delegation list polls through the visibility-aware scheduler', () => {
   assert.doesNotMatch(app, /setInterval\(pollRecent/)
 })
 
-test('the mounted polling effect discovers an older reused helper before its last active row tears it down', async () => {
+function mountPollingEffect(rows, server) {
   const app = readFileSync(new URL('../index.jsx', import.meta.url), 'utf8')
   const match = app.match(/useEffect\((\(\) => \{\n    if \(!token \|\| !hasActiveRecent\)[\s\S]*?\n  \}), \[token, hasActiveRecent, expanded\]/)
   assert.ok(match, 'exercise the actual polling effect, including its cleanup')
-  const rows = Array.from({ length: 100 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'running' : 'completed' }))
-  const server = rows.map((row) => ({ ...row }))
-  server[0].status = 'completed'
-  server[60].status = 'running'
   const recentRef = { current: rows }
-  const requests = []
-  let poll
-  let stopped = false
-  let cleanup
+  const state = { requests: [], poll: null, stopped: false, cleanup: undefined, recentRef }
   const setRecent = (next) => {
     recentRef.current = next
-    if (!next.some((row) => ACTIVE_STATUSES.has(row.status))) {
-      cleanup?.()
-      cleanup = undefined
+    if (!next.some((row) => isUnfinished(row.status))) {
+      state.cleanup?.()
+      state.cleanup = undefined
     }
   }
   const effect = new Function('token', 'hasActiveRecent', 'expanded', 'recentRef', 'setRecent',
     'fetch', 'startActivePolling', 'activePollLimit', 'mergePolledWindow', 'RECENT_LIST_LIMIT',
-    'finishedSince', 'loadRunDetail', 'window', 'ACTIVE_STATUSES', `return (${match[1]})`)('token', true, null,
+    'finishedSince', 'loadRunDetail', 'window', 'isUnfinished', `return (${match[1]})`)('token', true, null,
     recentRef, setRecent, async (url) => {
       const limit = Number(new URL(url, 'http://test').searchParams.get('limit'))
-      requests.push(limit)
+      state.requests.push(limit)
       return { ok: true, json: async () => ({ items: server.slice(0, limit) }) }
-    }, (callback) => { poll = callback; return () => { stopped = true } }, activePollLimit,
-    mergePolledWindow, RECENT_LIST_LIMIT, finishedSince, () => {}, { mobius: {} }, ACTIVE_STATUSES)
-  cleanup = effect()
-  await poll(false)
-  assert.deepEqual(requests, [21, RECENT_LIST_LIMIT])
-  assert.equal(recentRef.current[60].status, 'running')
-  assert.equal(stopped, false, 'the effect remains mounted to track the reused helper')
-  cleanup()
-  assert.equal(stopped, true)
+    }, (callback) => { state.poll = callback; return () => { state.stopped = true } }, activePollLimit,
+    mergePolledWindow, RECENT_LIST_LIMIT, finishedSince, () => {}, { mobius: {} }, isUnfinished)
+  state.cleanup = effect()
+  return state
+}
+
+test('the mounted polling effect discovers an older reused helper before its last active row tears it down', async () => {
+  const rows = Array.from({ length: 100 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'running' : 'completed' }))
+  const server = rows.map((row) => ({ ...row }))
+  server[0].status = 'completed'
+  server[60].status = 'running'
+  const state = mountPollingEffect(rows, server)
+  await state.poll(false)
+  assert.deepEqual(state.requests, [21, RECENT_LIST_LIMIT])
+  assert.equal(state.recentRef.current[60].status, 'running')
+  assert.equal(state.stopped, false, 'the effect remains mounted to track the reused helper')
+  state.cleanup()
+  assert.equal(state.stopped, true)
+})
+
+test('a list whose only unfinished helper is waiting polls one narrow window', async () => {
+  const rows = Array.from({ length: 150 }, (_, index) => ({ id: `d${index}`, status: index === 0 ? 'needs_input' : 'completed' }))
+  const state = mountPollingEffect(rows, rows.map((row) => ({ ...row })))
+  await state.poll(false)
+  await state.poll(false)
+  assert.deepEqual(state.requests, [21, 21], 'no full-list re-read while a helper waits')
+  assert.equal(state.stopped, false, 'polling continues for the whole wait')
 })

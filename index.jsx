@@ -7,15 +7,21 @@ import {
 } from '@openai/apps-sdk-ui/components/Icon'
 import catalog from './models.json'
 import {
-  ACTIVE_STATUSES,
   RECENT_LIST_LIMIT,
   activePollLimit,
+  canStop,
   cancellationMessage,
   createLatestRequest,
   finishedSince,
   groupDelegationsByChat,
+  isActive,
+  isAwaitingInput,
+  isUnfinished,
   mergePolledWindow,
+  openQuestion,
   startActivePolling,
+  statusLabel,
+  statusTone,
 } from './delegationActivity.js'
 
 const CONFIG_KEY = 'config.json'
@@ -70,6 +76,12 @@ const CSS = `
 .sa-run-status.is-active { color: var(--accent); }
 .sa-run-status.is-done { color: var(--green); }
 .sa-run-status.is-failed { color: color-mix(in srgb, var(--danger) 76%, var(--text)); }
+.sa-run-status.is-waiting { color: var(--text); text-transform: none; }
+.sa-run-status.is-waiting::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--accent); }
+.sa-run-question { margin: 0 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-light); }
+.sa-run-question-label { font-size: 10.5px; font-weight: 680; color: var(--muted); }
+.sa-run-question-text { margin-top: 4px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; color: var(--text); }
+.sa-run-question-options { margin: 6px 0 0; padding-left: 18px; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
 .sa-run-detail { margin: 0 0 12px; padding: 11px; border-radius: 11px; background: var(--surface-2); }
 .sa-run-result { margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
   font: 11.5px/1.5 var(--font); color: var(--text); }
@@ -87,6 +99,7 @@ const CSS = `
 .sa-chat-runs { border-top: 1px solid var(--border-light); padding-left: 12px;
   margin: 2px 0 10px; }
 .sa-chat-runs .sa-run:first-child { border-top: 0; }
+.sa-chat-status { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 
 /* mobius-ui:Card */
 .sa-card { border: 1px solid var(--border); border-radius: 16px;
@@ -329,20 +342,18 @@ function formatDuration(row) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function statusTone(status) {
-  if (ACTIVE_STATUSES.has(status)) return 'active'
-  if (status === 'completed') return 'done'
-  return 'failed'
-}
-
 const PROVIDER_LABEL = { claude: 'Claude', codex: 'Codex' }
 
-function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+function RunRow({ row, appId, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
   const duration = formatDuration(row)
   const tokens = formatNumber(row.usage?.total_tokens)
   const cost = formatCost(row.usage?.cost_usd)
   const open = expanded === row.id
-  const active = ACTIVE_STATUSES.has(row.status)
+  const active = isActive(row.status)
+  const waiting = isAwaitingInput(row.status)
+  const cancelable = canStop(row, appId)
+  // The polled row is the status authority; an older detail payload may lag.
+  const question = waiting ? openQuestion(row) || openQuestion(detail?.id === row.id ? detail : null) : null
   return (
     <div className="sa-run">
       <button className="sa-run-row" onClick={() => onToggle(row)} aria-expanded={open}>
@@ -356,17 +367,28 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
             {cost && <span>{cost}</span>}
           </div>
         </div>
-        <span className={`sa-run-status is-${statusTone(row.status)}`}>{row.status.replace('_', ' ')}</span>
+        <span className={`sa-run-status is-${statusTone(row.status)}`}>{statusLabel(row.status)}</span>
       </button>
       {open && (
         <div className="sa-run-detail">
-          <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : 'No written result was recorded.')}</div>
-          {active && (
+          {question && (
+            <div className="sa-run-question">
+              <div className="sa-run-question-label">Waiting for an answer from the chat that started it</div>
+              <div className="sa-run-question-text">{question.text}</div>
+              {question.options.length > 0 && (
+                <ul className="sa-run-question-options">
+                  {question.options.map((option, index) => <li key={index}>{option}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+          <div className="sa-run-result">{detailBusy ? 'Loading result…' : detail?.result || (active ? 'This task is still working.' : waiting ? 'No progress was written before the question.' : 'No written result was recorded.')}</div>
+          {cancelable && (
             <div className="sa-run-actions">
               <button className="sa-action is-danger" onClick={() => onCancel(row)}>
                 {cancelArmed === row.id ? 'Confirm stop' : 'Stop task'}
               </button>
-              {cancelArmed === row.id && <span className="sa-section-note">Tap again to stop the provider run.</span>}
+              {cancelArmed === row.id && <span className="sa-section-note">{waiting ? 'Tap again to withdraw the question and stop this task.' : 'Tap again to stop the provider run.'}</span>}
             </div>
           )}
         </div>
@@ -375,7 +397,7 @@ function RunRow({ row, expanded, detail, detailBusy, cancelArmed, onToggle, onCa
   )
 }
 
-function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
+function RecentWork({ rows, appId, expandedChat, onToggleChat, expanded, detail, detailBusy, cancelArmed, onToggle, onCancel }) {
   const chats = useMemo(() => groupDelegationsByChat(rows), [rows])
   return (
     <section className="sa-card">
@@ -401,12 +423,17 @@ function RecentWork({ rows, expandedChat, onToggleChat, expanded, detail, detail
                         {chat.models.map((m) => <span key={m}>{m}</span>)}
                       </div>
                     </div>
-                    {chat.active > 0 && <span className="sa-run-status is-active">{chat.active} running</span>}
+                    {(chat.active > 0 || chat.waiting > 0) && (
+                      <span className="sa-chat-status">
+                        {chat.active > 0 && <span className="sa-run-status is-active">{chat.active} running</span>}
+                        {chat.waiting > 0 && <span className="sa-run-status is-waiting">{chat.waiting} {chat.waiting === 1 ? 'needs an answer' : 'need answers'}</span>}
+                      </span>
+                    )}
                   </button>
                   {open && (
                     <div className="sa-chat-runs">
                       {chat.runs.map((row) => (
-                        <RunRow key={row.id} row={row} expanded={expanded} detail={detail}
+                        <RunRow key={row.id} row={row} appId={appId} expanded={expanded} detail={detail}
                           detailBusy={detailBusy} cancelArmed={cancelArmed} onToggle={onToggle} onCancel={onCancel} />
                       ))}
                     </div>
@@ -560,7 +587,8 @@ export default function Subagents({ appId, token }) {
   const migrationSaved = useRef(false)
   const recentRef = useRef([])
   const detailRequest = useRef(createLatestRequest())
-  const hasActiveRecent = recent.some((row) => ACTIVE_STATUSES.has(row.status))
+  // Waiting helpers resume when their parent answers, so keep polling for them.
+  const hasActiveRecent = recent.some((row) => isUnfinished(row.status))
 
   const models = useMemo(() => Object.fromEntries(
     PROVIDER_IDS.map((id) => [id, mergeModels(id, liveModels[id])])
@@ -642,10 +670,10 @@ export default function Subagents({ appId, token }) {
         if (!res.ok) return
         let items = (await res.json()).items || []
         if (disposed) return
-        // A reduced window with no active rows cannot prove that no helper is
-        // running: a completed helper farther down may have been reused.
+        // A reduced window with no unfinished rows cannot prove that no helper
+        // is unfinished: a completed helper farther down may have been reused.
         // Reconcile the whole list before allowing this effect to stop.
-        if (!full && items.length === limit && !items.some((row) => ACTIVE_STATUSES.has(row.status))) {
+        if (!full && items.length === limit && !items.some((row) => isUnfinished(row.status))) {
           const all = await fetch(`/api/delegations?limit=${RECENT_LIST_LIMIT}`, { headers })
           if (!all.ok) return
           items = (await all.json()).items || []
@@ -762,7 +790,7 @@ export default function Subagents({ appId, token }) {
       window.mobius?.signal?.('delegation_cancelled', { provider: row.provider })
     } catch (error) {
       if (error.name === 'AbortError') return
-      flash('The task is still running. Try again shortly.', 2600)
+      flash(isAwaitingInput(row.status) ? 'The task could not be stopped yet. Try again shortly.' : 'The task is still running. Try again shortly.', 2600)
       window.mobius?.signal?.('error', { message: error.message, source: 'delegation-cancel' })
     } finally {
       if (detailRequest.current.isCurrent(request.sequence)) setDetailBusy(false)
@@ -800,7 +828,7 @@ export default function Subagents({ appId, token }) {
                 connection={connections?.[id]} models={models[id]} runtime={runtime[id]}
                 busy={busy} onPatch={patchProvider} />
             ))}
-            <RecentWork rows={recent} expandedChat={expandedChat} onToggleChat={toggleChat}
+            <RecentWork rows={recent} appId={appId} expandedChat={expandedChat} onToggleChat={toggleChat}
               expanded={expanded} detail={detail} detailBusy={detailBusy}
               cancelArmed={cancelArmed} onToggle={toggleRun} onCancel={cancelRun} />
           </>
